@@ -1,0 +1,53 @@
+{
+    "name": "enovate/social-stream",
+    "description": "Pull posts from Instagram (and other social platforms) into Craft CMS templates",
+    "type": "craft-plugin",
+    "version": "1.0.0",
+    "keywords": [
+        "craft",
+        "cms",
+        "craftcms",
+        "craft-plugin",
+        "social-stream",
+        "instagram"
+    ],
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Enovate"
+        }
+    ],
+    "require": {
+        "php": "^8.2",
+        "craftcms/cms": "^5.0.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "enovate\\socialstream\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "enovate\\socialstream\\tests\\": "tests/"
+        }
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^10.0 || ^11.0"
+    },
+    "extra": {
+        "name": "Social Stream",
+        "handle": "social-stream",
+        "class": "enovate\\socialstream\\SocialStream",
+        "components": {
+            "providers": "enovate\\socialstream\\services\\Providers",
+            "token": "enovate\\socialstream\\services\\TokenService",
+            "streamCache": "enovate\\socialstream\\services\\CacheService"
+        }
+    },
+    "config": {
+        "allow-plugins": {
+            "yiisoft/yii2-composer": true,
+            "craftcms/plugin-installer": true
+        }
+    }
+}

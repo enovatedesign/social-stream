@@ -1,0 +1,500 @@
+{% extends '_layouts/cp' %}
+{% import '_includes/forms' as forms %}
+
+{% set title = 'Social Stream' | t('social-stream') %}
+{% set fullPageForm = true %}
+
+{% set tabs = {
+    connection: { label: 'Connection' | t('social-stream'), url: '#connection' },
+    configuration: { label: 'Configuration' | t('social-stream'), url: '#configuration' },
+} %}
+{% if hasToken and not isExpired %}
+    {% set tabs = tabs | merge({
+        preview: { label: 'Stream Preview' | t('social-stream'), url: '#preview' },
+    }) %}
+{% endif %}
+{% set tabs = tabs | merge({
+    api: { label: 'API' | t('social-stream'), url: '#api' },
+}) %}
+
+{% block toolbar %}
+    {% if allSites | length > 1 %}
+        <div id="sites-btn" class="btn menubtn" data-icon="world">{{ site.name }}</div>
+        <div class="menu">
+            <ul class="padded">
+                {% for s in allSites %}
+                    <li>
+                        <a {% if s.id == site.id %}class="sel"{% else %}href="{{ cpUrl('social-stream/settings/' ~ s.handle) }}"{% endif %}>
+                            {{ s.name }}
+                        </a>
+                    </li>
+                {% endfor %}
+            </ul>
+        </div>
+    {% endif %}
+{% endblock %}
+
+{% set content %}
+
+    {{ actionInput('social-stream/settings/save') }}
+    {{ hiddenInput('siteId', site.id) }}
+
+    {# ── Token status banner ── #}
+    {% if hasToken %}
+        {% if isExpired %}
+            <div class="pane" style="background: var(--ui-danger-bg-color, #fdd); padding: 12px 16px; margin-bottom: 24px; border-radius: 4px;">
+                <p style="margin: 0; color: var(--ui-danger-text-color, #c00);">
+                    <strong>{{ 'Token has expired' | t('social-stream') }}</strong> — please re-authorise to restore the connection.
+                </p>
+            </div>
+        {% elseif isExpiringSoon %}
+            <div class="pane" style="background: var(--ui-warning-bg-color, #fff3cd); padding: 12px 16px; margin-bottom: 24px; border-radius: 4px;">
+                <p style="margin: 0; color: var(--ui-warning-text-color, #856404);">
+                    <strong>{{ 'Token expires {date}' | t('social-stream', { date: connection.tokenExpiresAt }) }}</strong> — consider refreshing the token soon.
+                </p>
+            </div>
+        {% endif %}
+    {% endif %}
+
+    {# ══════════════════════════════════════════════════════════════════════
+       Connection tab
+       ══════════════════════════════════════════════════════════════════════ #}
+    <div id="connection">
+
+        {# ── Connection health panel ── #}
+        {% if hasToken %}
+            <div class="pane" style="padding: 16px 20px; margin-bottom: 24px;">
+                <h2 style="margin-top: 0;">{{ 'Connection Status' | t('social-stream') }}</h2>
+
+                <table class="data fullwidth" style="margin-bottom: 16px;">
+                    <tbody>
+                        <tr>
+                            <th style="width: 200px;">{{ 'Status' | t('social-stream') }}</th>
+                            <td>
+                                <span class="status {{ isExpired ? 'off' : (isExpiringSoon ? 'amber' : 'active') }}"></span>
+                                {% if isExpired %}
+                                    {{ 'Expired' | t('social-stream') }}
+                                {% elseif isExpiringSoon %}
+                                    {{ 'Expiring soon' | t('social-stream') }}
+                                {% else %}
+                                    {{ 'Connected' | t('social-stream') }}
+                                {% endif %}
+                            </td>
+                        </tr>
+                        <tr>
+                            <th>{{ 'Access Token' | t('social-stream') }}</th>
+                            <td><code>{{ maskedToken }}</code></td>
+                        </tr>
+                        {% if connection.tokenExpiresAt %}
+                            <tr>
+                                <th>{{ 'Token Expiry' | t('social-stream') }}</th>
+                                <td>{{ connection.tokenExpiresAt | date('j M Y, g:ia') }}</td>
+                            </tr>
+                        {% endif %}
+                        {% if connection.lastFetchAt %}
+                            <tr>
+                                <th>{{ 'Last Successful Fetch' | t('social-stream') }}</th>
+                                <td>{{ connection.lastFetchAt | date('j M Y, g:ia') }}</td>
+                            </tr>
+                        {% endif %}
+                        {% if connection.lastError %}
+                            <tr>
+                                <th>{{ 'Last Error' | t('social-stream') }}</th>
+                                <td>
+                                    <span style="color: var(--ui-danger-text-color, #c00);">{{ connection.lastError }}</span>
+                                    {% if connection.lastErrorAt %}
+                                        <span class="light"> · {{ connection.lastErrorAt | date('j M Y, g:ia') }}</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                        {% endif %}
+                        <tr>
+                            <th>{{ 'Rate Limit' | t('social-stream') }}</th>
+                            <td>
+                                {% if isRateLimited %}
+                                    <span class="status amber"></span> {{ 'Cooldown active' | t('social-stream') }}
+                                {% else %}
+                                    <span class="status active"></span> {{ 'No restrictions' | t('social-stream') }}
+                                {% endif %}
+                            </td>
+                        </tr>
+                        <tr>
+                            <th>{{ 'API Version' | t('social-stream') }}</th>
+                            <td><code>{{ apiVersion }}</code></td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <div id="health-actions">
+                    <button type="button" id="test-connection-btn" class="btn">{{ 'Test Connection' | t('social-stream') }}</button>
+                    <button type="button" id="refresh-stream-btn" class="btn">{{ 'Refresh Stream Now' | t('social-stream') }}</button>
+                    <span id="health-action-spinner" class="spinner hidden"></span>
+                    <div id="health-action-result" style="margin-top: 10px;"></div>
+                </div>
+            </div>
+        {% endif %}
+
+        {{ forms.autosuggestField({
+            label: 'Instagram App ID' | t('social-stream'),
+            instructions: 'From the Meta Developer portal. Supports environment variables.' | t('social-stream'),
+            id: 'appId',
+            name: 'appId',
+            value: decryptedAppId,
+            required: true,
+            suggestions: craft.cp.getEnvSuggestions(),
+            suggestEnvVars: true,
+        }) }}
+
+        {{ forms.autosuggestField({
+            label: 'Instagram App Secret' | t('social-stream'),
+            instructions: 'From the Meta Developer portal. Supports environment variables.' | t('social-stream'),
+            id: 'appSecret',
+            name: 'appSecret',
+            value: appSecretIsEnvVar ? decryptedAppSecret : '',
+            placeholder: (not appSecretIsEnvVar and connection.appSecret) ? '••••••••' : '',
+            required: true,
+            suggestions: craft.cp.getEnvSuggestions(),
+            suggestEnvVars: true,
+        }) }}
+
+        {% set authInput %}
+            {% if hasToken %}
+                <div class="pane" style="padding: 12px 16px; margin-bottom: 14px;">
+                    <p style="margin: 0;">
+                        <span class="status {{ isExpired ? 'off' : (isExpiringSoon ? 'amber' : 'active') }}"></span>
+                        {{ 'Connected' | t('social-stream') }} — <code>{{ maskedToken }}</code>
+                        {% if connection.tokenExpiresAt %}
+                            <span class="light"> · {{ 'Token expires {date}' | t('social-stream', { date: connection.tokenExpiresAt | date('j M Y') }) }}</span>
+                        {% endif %}
+                    </p>
+                </div>
+            {% endif %}
+            <a id="auth-btn" class="btn submit {% if not decryptedAppId %}disabled{% endif %}" href="#">
+                {{ hasToken ? 'Re-authorise' : 'Authorise' | t('social-stream') }}
+            </a>
+        {% endset %}
+
+        {{ forms.field({
+            label: 'Authorisation' | t('social-stream'),
+            id: 'auth-section',
+        }, authInput) }}
+
+    </div>
+
+    {# ══════════════════════════════════════════════════════════════════════
+       Configuration tab
+       ══════════════════════════════════════════════════════════════════════ #}
+    <div id="configuration" class="hidden">
+
+        {{ forms.textField({
+            label: 'Default Post Limit' | t('social-stream'),
+            instructions: 'The default number of posts to fetch (1–100).' | t('social-stream'),
+            id: 'defaultLimit',
+            name: 'defaultLimit',
+            type: 'number',
+            min: 1,
+            max: 100,
+            value: settingsRecord.defaultLimit ?? 25,
+        }) }}
+
+        {{ forms.lightswitchField({
+            label: 'Exclude Non-Feed Posts' | t('social-stream'),
+            instructions: 'Exclude posts not shared to the main feed (e.g. Trial reels).' | t('social-stream'),
+            id: 'excludeNonFeed',
+            name: 'excludeNonFeed',
+            on: settingsRecord.excludeNonFeed ?? false,
+        }) }}
+
+        {{ forms.textField({
+            label: 'Cache Duration' | t('social-stream'),
+            instructions: 'How long to cache stream data, in minutes.' | t('social-stream'),
+            id: 'cacheDuration',
+            name: 'cacheDuration',
+            type: 'number',
+            min: 1,
+            value: settingsRecord.cacheDuration ?? 60,
+        }) }}
+
+    </div>
+
+    {# ══════════════════════════════════════════════════════════════════════
+       Stream Preview tab
+       ══════════════════════════════════════════════════════════════════════ #}
+    {% if hasToken and not isExpired %}
+    <div id="preview" class="hidden">
+        <div style="margin-bottom: 16px;">
+            <button type="button" id="load-preview-btn" class="btn submit">{{ 'Load Stream Preview' | t('social-stream') }}</button>
+            <span id="preview-spinner" class="spinner hidden"></span>
+        </div>
+        <div id="preview-meta" style="margin-bottom: 16px;"></div>
+        <div id="preview-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px;"></div>
+        <div id="preview-empty"></div>
+    </div>
+    {% endif %}
+
+    {# ══════════════════════════════════════════════════════════════════════
+       API tab
+       ══════════════════════════════════════════════════════════════════════ #}
+    <div id="api" class="hidden">
+
+        {{ forms.lightswitchField({
+            label: 'Secure API Endpoint' | t('social-stream'),
+            instructions: 'Enable the optional JSON API endpoint.' | t('social-stream'),
+            id: 'secureApiEndpoint',
+            name: 'secureApiEndpoint',
+            on: settingsRecord.secureApiEndpoint ?? false,
+        }) }}
+
+        {% set apiTokenInput %}
+            {% if settingsRecord.apiToken %}
+                <p style="margin: 0 0 8px;">
+                    <span class="status active"></span>
+                    {{ 'Token configured' | t('social-stream') }}
+                </p>
+            {% endif %}
+            <button type="button" id="generate-api-token-btn" class="btn">
+                {{ settingsRecord.apiToken ? 'Regenerate Token' : 'Generate Token' | t('social-stream') }}
+            </button>
+            <span id="api-token-spinner" class="spinner hidden"></span>
+            <div id="api-token-result" style="margin-top: 10px;"></div>
+        {% endset %}
+
+        {{ forms.field({
+            label: 'API Token' | t('social-stream'),
+            instructions: 'Generate a bearer token for the JSON API endpoint. The token is shown once and cannot be retrieved later.' | t('social-stream'),
+            id: 'api-token-section',
+        }, apiTokenInput) }}
+
+    </div>
+
+{% endset %}
+
+{% js %}
+    (function() {
+        var appIdField = document.getElementById('appId');
+        var authBtn = document.getElementById('auth-btn');
+
+        function updateAuthBtn() {
+            if (appIdField && appIdField.value.trim().length > 0) {
+                authBtn.classList.remove('disabled');
+            } else {
+                authBtn.classList.add('disabled');
+            }
+        }
+
+        if (appIdField) {
+            appIdField.addEventListener('input', updateAuthBtn);
+            appIdField.addEventListener('blur', updateAuthBtn);
+        }
+
+        if (authBtn) {
+            authBtn.addEventListener('click', function(e) {
+                e.preventDefault();
+                if (authBtn.classList.contains('disabled')) return;
+                window.location.href = Craft.getActionUrl('social-stream/auth/handle-auth', {
+                    siteId: '{{ site.id }}'
+                });
+            });
+        }
+
+        // Health panel buttons
+        var testBtn = document.getElementById('test-connection-btn');
+        var refreshBtn = document.getElementById('refresh-stream-btn');
+        var spinner = document.getElementById('health-action-spinner');
+        var resultDiv = document.getElementById('health-action-result');
+
+        function showSpinner() {
+            if (spinner) spinner.classList.remove('hidden');
+            if (resultDiv) resultDiv.innerHTML = '';
+        }
+        function hideSpinner() {
+            if (spinner) spinner.classList.add('hidden');
+        }
+
+        if (testBtn) {
+            testBtn.addEventListener('click', function() {
+                showSpinner();
+                Craft.sendActionRequest('POST', 'social-stream/settings/test-connection', {
+                    data: { siteId: '{{ site.id }}' }
+                }).then(function(response) {
+                    hideSpinner();
+                    var d = response.data;
+                    if (d.success) {
+                        var info = d.data;
+                        resultDiv.innerHTML = '<div class="pane" style="padding: 10px 14px; background: var(--ui-success-bg-color, #d4edda);">'
+                            + '<p style="margin: 0; color: var(--ui-success-text-color, #155724);">'
+                            + '<span class="status active"></span> '
+                            + '<strong>' + Craft.escapeHtml(info.username || '') + '</strong>'
+                            + (info.account_type ? ' (' + Craft.escapeHtml(info.account_type) + ')' : '')
+                            + '</p></div>';
+                    } else {
+                        resultDiv.innerHTML = '<div class="pane" style="padding: 10px 14px; background: var(--ui-danger-bg-color, #fdd);">'
+                            + '<p style="margin: 0; color: var(--ui-danger-text-color, #c00);">'
+                            + Craft.escapeHtml(d.error)
+                            + '</p></div>';
+                    }
+                }).catch(function(e) {
+                    hideSpinner();
+                    var msg = 'Request failed.';
+                    if (e && e.response && e.response.data) {
+                        msg = e.response.data.error || e.response.data.message || msg;
+                    }
+                    resultDiv.innerHTML = '<div class="pane" style="padding: 10px 14px; background: var(--ui-danger-bg-color, #fdd);">'
+                        + '<p style="margin: 0; color: var(--ui-danger-text-color, #c00);">'
+                        + Craft.escapeHtml(msg) + '</p></div>';
+                });
+            });
+        }
+
+        if (refreshBtn) {
+            refreshBtn.addEventListener('click', function() {
+                showSpinner();
+                Craft.sendActionRequest('POST', 'social-stream/settings/refresh-stream', {
+                    data: { siteId: '{{ site.id }}' }
+                }).then(function(response) {
+                    hideSpinner();
+                    var d = response.data;
+                    resultDiv.innerHTML = '<div class="pane" style="padding: 10px 14px; background: var(--ui-success-bg-color, #d4edda);">'
+                        + '<p style="margin: 0; color: var(--ui-success-text-color, #155724);">'
+                        + Craft.escapeHtml(d.message)
+                        + '</p></div>';
+                }).catch(function(e) {
+                    hideSpinner();
+                    var msg = 'Request failed.';
+                    if (e && e.response && e.response.data) {
+                        msg = e.response.data.error || e.response.data.message || msg;
+                    }
+                    resultDiv.innerHTML = '<div class="pane" style="padding: 10px 14px; background: var(--ui-danger-bg-color, #fdd);">'
+                        + '<p style="margin: 0; color: var(--ui-danger-text-color, #c00);">'
+                        + Craft.escapeHtml(msg) + '</p></div>';
+                });
+            });
+        }
+
+        // API token generation
+        var genTokenBtn = document.getElementById('generate-api-token-btn');
+        var tokenSpinner = document.getElementById('api-token-spinner');
+        var tokenResultDiv = document.getElementById('api-token-result');
+
+        if (genTokenBtn) {
+            genTokenBtn.addEventListener('click', function() {
+                if (!confirm('{{ 'This will replace any existing API token. Continue?' | t('social-stream') | e('js') }}')) {
+                    return;
+                }
+                if (tokenSpinner) tokenSpinner.classList.remove('hidden');
+                if (tokenResultDiv) tokenResultDiv.innerHTML = '';
+
+                Craft.sendActionRequest('POST', 'social-stream/settings/generate-api-token', {
+                    data: { siteId: '{{ site.id }}' }
+                }).then(function(response) {
+                    if (tokenSpinner) tokenSpinner.classList.add('hidden');
+                    var d = response.data;
+                    if (d.success) {
+                        tokenResultDiv.innerHTML = '<div class="pane" style="padding: 10px 14px; background: var(--ui-warning-bg-color, #fff3cd);">'
+                            + '<p style="margin: 0 0 6px; color: var(--ui-warning-text-color, #856404);"><strong>{{ 'Copy this token now — it will not be shown again:' | t('social-stream') | e('js') }}</strong></p>'
+                            + '<code style="word-break: break-all; user-select: all;">' + Craft.escapeHtml(d.token) + '</code>'
+                            + '</div>';
+                        genTokenBtn.textContent = '{{ 'Regenerate Token' | t('social-stream') | e('js') }}';
+                    } else {
+                        tokenResultDiv.innerHTML = '<div class="pane" style="padding: 10px 14px; background: var(--ui-danger-bg-color, #fdd);">'
+                            + '<p style="margin: 0; color: var(--ui-danger-text-color, #c00);">'
+                            + Craft.escapeHtml(d.error)
+                            + '</p></div>';
+                    }
+                }).catch(function() {
+                    if (tokenSpinner) tokenSpinner.classList.add('hidden');
+                    tokenResultDiv.innerHTML = '<div class="pane" style="padding: 10px 14px; background: var(--ui-danger-bg-color, #fdd);">'
+                        + '<p style="margin: 0; color: var(--ui-danger-text-color, #c00);">Request failed.</p></div>';
+                });
+            });
+        }
+        // Stream preview
+        var previewBtn = document.getElementById('load-preview-btn');
+        var previewSpinner = document.getElementById('preview-spinner');
+        var previewGrid = document.getElementById('preview-grid');
+        var previewMeta = document.getElementById('preview-meta');
+        var previewEmpty = document.getElementById('preview-empty');
+
+        if (previewBtn) {
+            previewBtn.addEventListener('click', function() {
+                if (previewSpinner) previewSpinner.classList.remove('hidden');
+                previewGrid.innerHTML = '';
+                previewMeta.innerHTML = '';
+                previewEmpty.innerHTML = '';
+
+                Craft.sendActionRequest('POST', 'social-stream/settings/preview-stream', {
+                    data: { siteId: '{{ site.id }}' }
+                }).then(function(response) {
+                    if (previewSpinner) previewSpinner.classList.add('hidden');
+                    var d = response.data;
+
+                    if (!d.success) {
+                        previewEmpty.innerHTML = '<div class="pane" style="padding: 10px 14px; background: var(--ui-danger-bg-color, #fdd);">'
+                            + '<p style="margin: 0; color: var(--ui-danger-text-color, #c00);">'
+                            + Craft.escapeHtml(d.error) + '</p></div>';
+                        return;
+                    }
+
+                    var posts = d.data || [];
+                    previewMeta.innerHTML = '<p class="light">' + posts.length + ' post' + (posts.length !== 1 ? 's' : '')
+                        + (d.cached ? ' (from cache)' : ' (fetched live)') + '</p>';
+
+                    if (posts.length === 0) {
+                        previewEmpty.innerHTML = '<p class="light">{{ 'No posts found.' | t('social-stream') | e('js') }}</p>';
+                        return;
+                    }
+
+                    posts.forEach(function(post) {
+                        var thumb = post.thumbnail_url || post.media_url || '';
+                        var card = document.createElement('div');
+                        card.style.cssText = 'border: 1px solid var(--hairline-color, #e3e5e8); border-radius: 6px; overflow: hidden; background: var(--white);';
+
+                        var img = '';
+                        if (thumb) {
+                            img = '<div style="aspect-ratio: 1; overflow: hidden; background: #f5f5f5;">'
+                                + '<img src="' + Craft.escapeHtml(thumb) + '" style="width: 100%; height: 100%; object-fit: cover;" loading="lazy" />'
+                                + '</div>';
+                        }
+
+                        var type = post.media_type || '';
+                        var badge = '';
+                        if (type === 'VIDEO') badge = '<span style="background: #5c6ac4; color: #fff; font-size: 11px; padding: 2px 6px; border-radius: 3px;">Video</span> ';
+                        else if (type === 'CAROUSEL_ALBUM') badge = '<span style="background: #50b83c; color: #fff; font-size: 11px; padding: 2px 6px; border-radius: 3px;">Carousel</span> ';
+
+                        var caption = post.caption || '';
+                        if (caption.length > 80) caption = caption.substring(0, 80) + '…';
+
+                        var date = '';
+                        if (post.timestamp) {
+                            try { date = new Date(post.timestamp).toLocaleDateString(); } catch(e) {}
+                        }
+
+                        var stats = '';
+                        if (post.like_count !== null && post.like_count !== undefined) stats += post.like_count + ' likes';
+                        if (post.comments_count !== null && post.comments_count !== undefined) stats += (stats ? ' · ' : '') + post.comments_count + ' comments';
+
+                        card.innerHTML = img
+                            + '<div style="padding: 10px;">'
+                            + '<p style="margin: 0 0 4px; font-size: 12px;">' + badge
+                            + '<span class="light">' + Craft.escapeHtml(date) + '</span></p>'
+                            + (caption ? '<p style="margin: 0 0 4px; font-size: 12px; line-height: 1.4;">' + Craft.escapeHtml(caption) + '</p>' : '')
+                            + (stats ? '<p style="margin: 0; font-size: 11px;" class="light">' + Craft.escapeHtml(stats) + '</p>' : '')
+                            + (post.permalink ? '<p style="margin: 4px 0 0;"><a href="' + Craft.escapeHtml(post.permalink) + '" target="_blank" rel="noopener" style="font-size: 11px;">View on Instagram →</a></p>' : '')
+                            + '</div>';
+
+                        previewGrid.appendChild(card);
+                    });
+                }).catch(function(e) {
+                    if (previewSpinner) previewSpinner.classList.add('hidden');
+                    var msg = 'Request failed.';
+                    if (e && e.response && e.response.data) {
+                        msg = e.response.data.error || e.response.data.message || msg;
+                    }
+                    previewEmpty.innerHTML = '<div class="pane" style="padding: 10px 14px; background: var(--ui-danger-bg-color, #fdd);">'
+                        + '<p style="margin: 0; color: var(--ui-danger-text-color, #c00);">'
+                        + Craft.escapeHtml(msg) + '</p></div>';
+                });
+            });
+        }
+    })();
+{% endjs %}
