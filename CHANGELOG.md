@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.0 - 2026-04-22
+
+### Changed
+
+- Relicensed from MIT to the standard Craft commercial plugin license ahead of a paid release via the Craft Plugin Store. Each licensed copy permits one production environment; dev and staging installs are unrestricted. See [LICENSE.md](LICENSE.md) for the full terms.
+
 ## 1.0.3 - 2026-04-22
 
 ### Added
