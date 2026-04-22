@@ -2,17 +2,22 @@
 
 namespace enovate\socialstream\console\controllers;
 
-use Craft;
 use craft\console\Controller;
-use enovate\socialstream\SocialStream;
+use enovate\socialstream\jobs\RefreshTokenJob;
+use enovate\socialstream\records\ConnectionRecord;
 use yii\console\ExitCode;
 
 /**
- * Token management commands.
+ * Manual token refresh command.
+ *
+ * The consolidated `social-stream/refresh` cron handles token refresh
+ * automatically when a token is within 7 days of expiry. Use this command
+ * to force an early refresh — for example after re-authenticating or
+ * rotating the Instagram app secret.
  *
  * Usage:
- *   php craft social-stream/token/refresh          # Refresh all sites
- *   php craft social-stream/token/refresh --site=1  # Refresh a specific site
+ *   php craft social-stream/token/refresh             # Queue refresh for all sites
+ *   php craft social-stream/token/refresh --site=1    # Queue refresh for a specific site
  */
 class TokenController extends Controller
 {
@@ -30,34 +35,31 @@ class TokenController extends Controller
     }
 
     /**
-     * Refresh Instagram long-lived access token(s).
+     * Queue an Instagram long-lived access token refresh for one or all sites.
      */
     public function actionRefresh(): int
     {
+        $provider = 'instagram';
+
         if ($this->site !== null) {
-            $this->stdout("Refreshing token for site {$this->site}..." . PHP_EOL);
-            $result = SocialStream::$plugin->token->refreshToken($this->site, 'instagram');
-
-            if ($result['success']) {
-                $this->stdout("Token refreshed successfully." . PHP_EOL);
-                return ExitCode::OK;
-            }
-
-            $this->stderr("Failed: {$result['error']}" . PHP_EOL);
-            return ExitCode::UNSPECIFIED_ERROR;
+            RefreshTokenJob::pushIfNotQueued($this->site, $provider);
+            $this->stdout("Site {$this->site} ({$provider}): token refresh queued." . PHP_EOL);
+            return ExitCode::OK;
         }
 
-        $this->stdout("Refreshing tokens for all sites..." . PHP_EOL);
-        $result = SocialStream::$plugin->token->refreshAllTokens('instagram');
+        $connections = ConnectionRecord::findAll(['provider' => $provider]);
 
-        foreach ($result['results'] as $siteId => $siteResult) {
-            if ($siteResult['success']) {
-                $this->stdout("  Site {$siteId}: OK" . PHP_EOL);
-            } else {
-                $this->stderr("  Site {$siteId}: FAILED — {$siteResult['error']}" . PHP_EOL);
-            }
+        if (empty($connections)) {
+            $this->stdout("No {$provider} connections found." . PHP_EOL);
+            return ExitCode::OK;
         }
 
-        return $result['success'] ? ExitCode::OK : ExitCode::UNSPECIFIED_ERROR;
+        foreach ($connections as $connection) {
+            RefreshTokenJob::pushIfNotQueued($connection->siteId, $provider);
+            $this->stdout("  Site {$connection->siteId} ({$provider}): token refresh queued." . PHP_EOL);
+        }
+
+        $this->stdout('Done. ' . count($connections) . ' job(s) queued.' . PHP_EOL);
+        return ExitCode::OK;
     }
 }

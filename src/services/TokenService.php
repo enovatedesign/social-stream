@@ -17,6 +17,12 @@ use GuzzleHttp\Exception\GuzzleException;
  */
 class TokenService extends Component
 {
+    /**
+     * Days before a token's expiry at which the consolidated cron should
+     * proactively queue a refresh.
+     */
+    public const REFRESH_THRESHOLD_DAYS = 7;
+
     // -------------------------------------------------------------------------
     // Encryption helpers
     // -------------------------------------------------------------------------

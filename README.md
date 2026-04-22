@@ -263,27 +263,39 @@ Each `Post` object in `stream.data` provides:
 
 ## Cron Setup
 
-Two CLI commands should be run on a schedule:
+A single cron entry handles both stream cache pre-warming and Instagram token refresh:
 
-### Token Refresh
-
-Refreshes the long-lived token before it expires (recommended: daily at 3 AM):
-
-```bash
-0 3 * * * cd /path/to/craft && php craft social-stream/token/refresh
+```cron
+# Social Stream — pre-warms the cache and refreshes expiring tokens
+7,37 * * * * cd /path/to/craft && php craft social-stream/refresh
 ```
 
-Accepts `--site=<handle>` to refresh a specific site, or refreshes all sites when omitted.
+Each run pushes a `RefreshStreamJob` per connection, and additionally queues a `RefreshTokenJob` for any connection whose Instagram token is within 7 days of expiry. No separate daily cron for token refresh is needed — it's handled opportunistically.
 
-### Stream Refresh
+**Cadence:** set this to roughly half of your configured `cacheDuration` (default: 60 minutes → every 30 minutes). That gives one pre-warm per fresh window plus a safety margin if a cron run is missed.
 
-Pre-warms the cache so front-end requests never trigger a cold API call (recommended: every 15 minutes):
+**Pick random minute offsets.** The example above uses `7,37` rather than `0,30` or `*/30`. Running exactly on the hour means every Social Stream install hits Meta's API at the same instant, which strains their rate limits and slows your own requests. Choose any two minute values 30 apart that suit your infrastructure.
+
+Options accepted by `social-stream/refresh`:
+
+- `--site=<id>` — scope to a single site (otherwise all sites with a connection are refreshed)
+- `--provider=<handle>` — scope to a single provider (e.g. `instagram`)
+- `--force-token` — queue a token refresh for every matched connection regardless of expiry
+
+### Running on multiple web hosts
+
+The cron command is safe to run on every web host in a load-balanced setup. Before pushing either kind of job, the plugin checks the Craft queue table (via the primary database connection, so read-replica lag can't mislead it) and skips the push if an identical pending job is present or if an identical job failed within the last two hours. No server-affinity or cron-on-one-host-only configuration is required — though you're free to run cron on a single host if you prefer.
+
+### Manual token refresh
+
+The consolidated cron handles token refresh automatically. You only need to run the manual command after re-authenticating or if you want to force-refresh a token early:
 
 ```bash
-*/15 * * * * cd /path/to/craft && php craft social-stream/refresh
+php craft social-stream/token/refresh           # queue refresh for all sites
+php craft social-stream/token/refresh --site=1  # queue refresh for a specific site
 ```
 
-Accepts `--site=<handle>` to refresh a specific site, or refreshes all sites when omitted.
+This command uses the same queue-table dedup as the cron, so it's also safe on multiple hosts.
 
 ---
 

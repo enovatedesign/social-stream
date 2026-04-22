@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.0.3 - 2026-04-22
+
+### Added
+
+- `social-stream/refresh` is now a consolidated cron entry point: each invocation pre-warms the stream cache *and* queues a token refresh for any connection whose Instagram token is within 7 days of expiry. A single cron line is all that's needed — no separate daily token-refresh cron.
+- `--force-token` flag on `social-stream/refresh` for queueing a token refresh regardless of expiry (useful after re-authenticating or rotating the Instagram app secret).
+- `TokenService::REFRESH_THRESHOLD_DAYS` constant as the single owner of the "expiring soon" policy.
+
+### Changed
+
+- Both cron commands are now safe to run on every web host in a load-balanced setup. Before pushing a job, the plugin checks the Craft queue table (via the primary DB, so replica lag can't mislead it) and skips the push if an identical pending job is present or if one failed within the last two hours.
+- `social-stream/token/refresh` now pushes work through `RefreshTokenJob` instead of calling `TokenService::refreshToken()` synchronously in the console process. The manual command behaves the same way from the user's perspective but benefits from the queue-table dedup and the existing retry-with-backoff logic.
+- README recommends running `social-stream/refresh` roughly every 30 minutes (half of the default `cacheDuration`) with random minute offsets, rather than every 15 minutes on the hour — reduces wasted API calls and avoids every install hitting Meta simultaneously.
+- `RefreshStreamJob` and `RefreshTokenJob` descriptions now include a canonical, locale-independent dedup tag (e.g. `[social-stream:refresh-stream:1:instagram]`) so the queue-table check works regardless of which locale the console runs in.
+
+### Fixed
+
+- Token refresh was not load-balancer safe: multiple web hosts running the cron at the same minute would race on `/refresh_access_token` calls and writes to `ConnectionRecord`, potentially leaving a stale `tokenExpiresAt`. The new queue-table dedup makes the operation idempotent across hosts.
+- Stream refresh dedup previously relied on a per-host cache fingerprint, which only worked when the cache backend was shared (Redis/DB). With a per-host file cache every host enqueued its own job. The queue-table check now provides a correctness floor beneath the existing cache fast-path.
+
 ## 1.0.2 - 2026-04-22
 
 ### Changed

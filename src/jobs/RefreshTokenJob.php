@@ -3,6 +3,7 @@
 namespace enovate\socialstream\jobs;
 
 use Craft;
+use craft\db\Query;
 use craft\queue\BaseJob;
 use enovate\socialstream\SocialStream;
 
@@ -66,14 +67,71 @@ class RefreshTokenJob extends BaseJob
 
     protected function defaultDescription(): ?string
     {
-        $desc = Craft::t('social-stream', 'Refreshing Social Stream token for site {siteId}', [
+        $desc = Craft::t('social-stream', 'Refreshing Social Stream token for site {siteId} ({provider})', [
             'siteId' => $this->siteId ?? 'all',
+            'provider' => $this->provider,
         ]);
 
         if ($this->attempt > 0) {
             $desc .= ' (retry ' . $this->attempt . ')';
         }
 
-        return $desc;
+        return $desc . ' [' . self::dedupTag($this->siteId ?? 0, $this->provider) . ']';
+    }
+
+    /**
+     * Push a token refresh job, but only if an identical job isn't already queued
+     * or running. Safe to call from every web host in a load-balanced setup.
+     *
+     * Used by the cron entry path. The job's own retry self-reschedule in execute()
+     * bypasses this check on purpose — retries must push even while the previous
+     * attempt is still in the queue with fail=true.
+     */
+    public static function pushIfNotQueued(int $siteId, string $provider): void
+    {
+        $tag = self::dedupTag($siteId, $provider);
+        $like = ['like', 'description', $tag];
+
+        Craft::$app->getDb()->usePrimary(function () use ($like) {
+            Craft::$app->getDb()->createCommand()
+                ->delete('{{%queue}}', [
+                    'and',
+                    $like,
+                    ['fail' => true],
+                    ['<', 'timePushed', time() - 86400],
+                ])
+                ->execute();
+        });
+
+        $pending = Craft::$app->getDb()->usePrimary(fn() => (new Query())
+            ->from('{{%queue}}')
+            ->where($like)
+            ->andWhere(['fail' => false])
+            ->exists());
+
+        if ($pending) {
+            return;
+        }
+
+        $recentlyFailed = Craft::$app->getDb()->usePrimary(fn() => (new Query())
+            ->from('{{%queue}}')
+            ->where($like)
+            ->andWhere(['fail' => true])
+            ->andWhere(['>=', 'timePushed', time() - 7200])
+            ->exists());
+
+        if ($recentlyFailed) {
+            return;
+        }
+
+        Craft::$app->queue->push(new static([
+            'siteId' => $siteId,
+            'provider' => $provider,
+        ]));
+    }
+
+    private static function dedupTag(int $siteId, string $provider): string
+    {
+        return "social-stream:refresh-token:{$siteId}:{$provider}";
     }
 }
