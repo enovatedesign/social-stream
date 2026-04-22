@@ -11,26 +11,13 @@ A Craft CMS 5 plugin for pulling Instagram posts into your templates via the Ins
 
 ## Installation
 
-Add the plugin as a path repository in your Craft project's `composer.json`:
-
-```json
-{
-    "repositories": [
-        {
-            "type": "path",
-            "url": "/path/to/social-stream"
-        }
-    ]
-}
-```
-
-Then require the package:
+Install via Composer:
 
 ```bash
 composer require enovate/social-stream
 ```
 
-Install the plugin via the Craft CP under **Settings > Plugins**, or from the command line:
+Then install the plugin via the Craft CP under **Settings > Plugins**, or from the command line:
 
 ```bash
 php craft plugin/install social-stream
@@ -420,7 +407,7 @@ Event::on(
 );
 ```
 
-Your provider should extend `enovate\socialstream\base\Provider`, implementing `handle()`, `displayName()`, `doFetchStream()`, and `doFetchProfile()`. The base class handles rate-limit state, error recording, last-fetch timestamps, and lifecycle events.
+Your provider should extend `enovate\socialstream\base\Provider`, implementing `handle()`, `doFetchStream()`, and `doFetchProfile()`. Optionally override `displayName()` to supply a human-readable name. The base class handles rate-limit state, error recording, last-fetch timestamps, and lifecycle events.
 
 ### Lifecycle events
 

@@ -2,7 +2,7 @@
     "name": "enovate/social-stream",
     "description": "Pull posts from Instagram (and other social platforms) into Craft CMS templates",
     "type": "craft-plugin",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "keywords": [
         "craft",
         "cms",

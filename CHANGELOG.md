@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.2 - 2026-04-22
+
+### Changed
+
+- Install instructions in the README now reflect the plugin's availability on Packagist — installation is a plain `composer require enovate/social-stream`, no path/VCS repository required.
+- The Extending section no longer claims custom providers must implement `displayName()` — the abstract requirement was dropped in 1.0.1, so it's now documented as an optional override.
+
 ## 1.0.1 - 2026-04-22
 
 ### Fixed
