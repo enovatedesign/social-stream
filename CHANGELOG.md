@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.0.1 - 2026-04-22
+
+### Fixed
+
+- Fatal error when loading the Stream Preview: `Post::toArray()`, `PostAuthor::toArray()`, and `PostMedia::toArray()` declared `bool $recursive`, which narrowed the parent `yii\base\Model::toArray()` parameter type and violated PHP's LSP rules.
+- Stream Preview in the CP rendered post cards without thumbnails. The preview JS was still reading the old Instagram-native keys (`media_url`, `thumbnail_url`, `media_type`, `like_count`, `comments_count`) and has been updated to the provider-agnostic `Post` shape (`images[]`, `videos[]`, `children[]`, `likeCount`, `commentsCount`, `meta.mediaType`), falling back to the first carousel child for the thumbnail.
+- `SettingsController::actionSave()` called `TokenService::getConnection()` without a provider handle; it now passes `'instagram'` so saving settings works on sites that don't yet have a connection loaded.
+
+### Changed
+
+- Removed the abstract `displayName()` requirement from `enovate\socialstream\base\Provider`; providers no longer need to implement it.
+
 ## 1.0.0 - 2026-04-21
 
 Initial release.

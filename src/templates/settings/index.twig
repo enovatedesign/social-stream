@@ -444,8 +444,22 @@
                         return;
                     }
 
+                    function pickThumb(p) {
+                        var imgs = (p && p.images) || [];
+                        var vids = (p && p.videos) || [];
+                        if (imgs.length) return imgs[0].url || imgs[0].thumbnailUrl || '';
+                        if (vids.length) return vids[0].thumbnailUrl || vids[0].url || '';
+                        return '';
+                    }
+
                     posts.forEach(function(post) {
-                        var thumb = post.thumbnail_url || post.media_url || '';
+                        var thumb = pickThumb(post);
+                        if (!thumb) {
+                            var kids = post.children || [];
+                            for (var i = 0; i < kids.length && !thumb; i++) {
+                                thumb = pickThumb(kids[i]);
+                            }
+                        }
                         var card = document.createElement('div');
                         card.style.cssText = 'border: 1px solid var(--hairline-color, #e3e5e8); border-radius: 6px; overflow: hidden; background: var(--white);';
 
@@ -456,7 +470,7 @@
                                 + '</div>';
                         }
 
-                        var type = post.media_type || '';
+                        var type = (post.meta && post.meta.mediaType) || '';
                         var badge = '';
                         if (type === 'VIDEO') badge = '<span style="background: #5c6ac4; color: #fff; font-size: 11px; padding: 2px 6px; border-radius: 3px;">Video</span> ';
                         else if (type === 'CAROUSEL_ALBUM') badge = '<span style="background: #50b83c; color: #fff; font-size: 11px; padding: 2px 6px; border-radius: 3px;">Carousel</span> ';
@@ -470,8 +484,8 @@
                         }
 
                         var stats = '';
-                        if (post.like_count !== null && post.like_count !== undefined) stats += post.like_count + ' likes';
-                        if (post.comments_count !== null && post.comments_count !== undefined) stats += (stats ? ' · ' : '') + post.comments_count + ' comments';
+                        if (post.likeCount !== null && post.likeCount !== undefined) stats += post.likeCount + ' likes';
+                        if (post.commentsCount !== null && post.commentsCount !== undefined) stats += (stats ? ' · ' : '') + post.commentsCount + ' comments';
 
                         card.innerHTML = img
                             + '<div style="padding: 10px;">'

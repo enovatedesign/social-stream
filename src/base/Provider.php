@@ -27,12 +27,10 @@ abstract class Provider extends Component implements ProviderInterface
      */
     protected const RATE_LIMIT_TTL = 900;
 
-    // Abstract static metadata
+    // Static metadata
     // =========================================================================
 
     abstract public static function handle(): string;
-
-    abstract public static function displayName(): string;
 
     // Instance delegates — cheap sugar so callers can work with instances.
     // =========================================================================

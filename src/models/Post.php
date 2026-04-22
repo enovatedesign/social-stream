@@ -58,7 +58,7 @@ class Post extends Model
      * @param array $expand Unused; present to match craft\base\Model signature.
      * @param bool $recursive Unused; present to match craft\base\Model signature.
      */
-    public function toArray(array $fields = [], array $expand = [], bool $recursive = true): array
+    public function toArray(array $fields = [], array $expand = [], $recursive = true): array
     {
         return [
             'id' => $this->id,

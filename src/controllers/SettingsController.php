@@ -210,7 +210,7 @@ class SettingsController extends Controller
         $siteId = (int) $request->getRequiredBodyParam('siteId');
         $tokenService = SocialStream::$plugin->token;
 
-        $connection = $tokenService->getConnection($siteId);
+        $connection = $tokenService->getConnection($siteId, 'instagram');
         $connection->appId = $tokenService->encrypt($request->getBodyParam('appId'));
         $appSecret = $request->getBodyParam('appSecret');
         if ($appSecret !== null && $appSecret !== '') {
