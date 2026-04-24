@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.1 - 2026-04-24
+
+### Added
+
+- Plugin icons (`icon.svg` and `icon-mask.svg`) at the plugin root.
+
 ## 1.1.0 - 2026-04-22
 
 ### Changed
