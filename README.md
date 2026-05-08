@@ -444,3 +444,32 @@ Event::on(
     }
 );
 ```
+
+### Background refresh event
+
+`RefreshStreamJob::EVENT_AFTER_REFRESH_STREAM` fires after a background refresh successfully replaces the cached stream payload. The typical use case is invalidating a downstream cache (e.g. a CDN or Varnish fronting the page that renders the stream) so visitors see the new posts.
+
+The event fires only when **all** of the following are true:
+
+- The refresh ran via `RefreshStreamJob` — i.e. the cron entry point (`php craft social-stream/refresh`) or the queue. Cold-miss synchronous fetches on the front-end do **not** trigger it; those happen inside a single render and don't represent a change in upstream data.
+- The provider's `fetchStream()` returned `success: true`. A failed fetch leaves the previous cache in place and is not signalled.
+- The new payload differs from what was already cached. If the refresh produced a byte-identical response (same posts, same order, same engagement counts), nothing downstream needs to invalidate, so the event is suppressed.
+
+The event is dispatched from `RefreshStreamJob`, so subscribers attach to that class:
+
+```php
+use enovate\socialstream\events\StreamRefreshedEvent;
+use enovate\socialstream\jobs\RefreshStreamJob;
+use yii\base\Event;
+
+Event::on(
+    RefreshStreamJob::class,
+    RefreshStreamJob::EVENT_AFTER_REFRESH_STREAM,
+    function (StreamRefreshedEvent $event) {
+        // $event->siteId, $event->provider, $event->options, $event->response
+        // ...purge a CDN, ping a webhook, etc.
+    }
+);
+```
+
+The event runs in the queue worker (console) context, not in a web request, so listeners that need a request URL should derive it from the site's base URL via `$event->siteId` rather than reading it from `Craft::$app->getRequest()`.

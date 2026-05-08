@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.2.0 - 2026-05-08
+
+### Added
+
+- `RefreshStreamJob::EVENT_AFTER_REFRESH_STREAM` event, fired after a successful background refresh replaces the cached stream payload. Listeners receive a `StreamRefreshedEvent` with `siteId`, `provider`, `options`, and the full provider `response`. Useful for invalidating downstream caches (e.g. a CDN / Varnish fronting pages that render the stream). Not fired on cold-miss synchronous fetches, on failed refreshes, or when the new payload is byte-identical to what was already cached.
+
+### Fixed
+
+- Plugin icons were placed at the plugin root in 1.1.1, but Craft looks for `icon.svg` and `icon-mask.svg` under the plugin's `basePath` (i.e. `src/`). The icons have been moved so the CP nav now uses the masked icon and the Plugins screen uses the colour icon.
+
 ## 1.1.1 - 2026-04-24
 
 ### Added
