@@ -8,7 +8,7 @@
     connection: { label: 'Connection' | t('social-stream'), url: '#connection' },
     configuration: { label: 'Configuration' | t('social-stream'), url: '#configuration' },
 } %}
-{% if hasToken and not isExpired %}
+{% if hasToken and not isExpired and not needsReauth %}
     {% set tabs = tabs | merge({
         preview: { label: 'Stream Preview' | t('social-stream'), url: '#preview' },
     }) %}
@@ -41,7 +41,17 @@
 
     {# ── Token status banner ── #}
     {% if hasToken %}
-        {% if isExpired %}
+        {% if needsReauth %}
+            <div class="pane" style="background: var(--ui-danger-bg-color, #fdd); padding: 12px 16px; margin-bottom: 24px; border-radius: 4px;">
+                <p style="margin: 0; color: var(--ui-danger-text-color, #c00);">
+                    <strong>{{ 'Instagram has rejected this token' | t('social-stream') }}</strong> —
+                    {{ 'stream requests are suspended until the connection is re-authorised.' | t('social-stream') }}
+                    {% if connection.needsReauthAt %}
+                        <span class="light">{{ 'Rejected since {date}' | t('social-stream', { date: connection.needsReauthAt | date('j M Y, g:ia') }) }}</span>
+                    {% endif %}
+                </p>
+            </div>
+        {% elseif isExpired %}
             <div class="pane" style="background: var(--ui-danger-bg-color, #fdd); padding: 12px 16px; margin-bottom: 24px; border-radius: 4px;">
                 <p style="margin: 0; color: var(--ui-danger-text-color, #c00);">
                     <strong>{{ 'Token has expired' | t('social-stream') }}</strong> — please re-authorise to restore the connection.
@@ -71,8 +81,10 @@
                         <tr>
                             <th style="width: 200px;">{{ 'Status' | t('social-stream') }}</th>
                             <td>
-                                <span class="status {{ isExpired ? 'off' : (isExpiringSoon ? 'amber' : 'active') }}"></span>
-                                {% if isExpired %}
+                                <span class="status {{ (isExpired or needsReauth) ? 'off' : (isExpiringSoon ? 'amber' : 'active') }}"></span>
+                                {% if needsReauth %}
+                                    {{ 'Rejected — re-authorisation required' | t('social-stream') }}
+                                {% elseif isExpired %}
                                     {{ 'Expired' | t('social-stream') }}
                                 {% elseif isExpiringSoon %}
                                     {{ 'Expiring soon' | t('social-stream') }}
@@ -161,7 +173,7 @@
             {% if hasToken %}
                 <div class="pane" style="padding: 12px 16px; margin-bottom: 14px;">
                     <p style="margin: 0;">
-                        <span class="status {{ isExpired ? 'off' : (isExpiringSoon ? 'amber' : 'active') }}"></span>
+                        <span class="status {{ (isExpired or needsReauth) ? 'off' : (isExpiringSoon ? 'amber' : 'active') }}"></span>
                         {{ 'Connected' | t('social-stream') }} — <code>{{ maskedToken }}</code>
                         {% if connection.tokenExpiresAt %}
                             <span class="light"> · {{ 'Token expires {date}' | t('social-stream', { date: connection.tokenExpiresAt | date('j M Y') }) }}</span>
@@ -220,7 +232,7 @@
     {# ══════════════════════════════════════════════════════════════════════
        Stream Preview tab
        ══════════════════════════════════════════════════════════════════════ #}
-    {% if hasToken and not isExpired %}
+    {% if hasToken and not isExpired and not needsReauth %}
     <div id="preview" class="hidden">
         <div style="margin-bottom: 16px;">
             <button type="button" id="load-preview-btn" class="btn submit">{{ 'Load Stream Preview' | t('social-stream') }}</button>

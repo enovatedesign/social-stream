@@ -5,12 +5,15 @@ namespace enovate\socialstream\jobs;
 use Craft;
 use craft\db\Query;
 use craft\queue\BaseJob;
+use enovate\socialstream\records\ConnectionRecord;
 use enovate\socialstream\SocialStream;
+use yii\base\Exception;
 
 /**
  * Queue job that refreshes an Instagram long-lived token with exponential backoff.
  *
- * Retry schedule: 1 min → 5 min → 30 min, then give up.
+ * Retry schedule: 1 min → 5 min → 30 min, then fail the job so the exhausted
+ * refresh is visible in the CP's Queue Manager.
  */
 class RefreshTokenJob extends BaseJob
 {
@@ -28,12 +31,29 @@ class RefreshTokenJob extends BaseJob
      */
     private const BACKOFF_DELAYS = [60, 300, 1800];
 
+    /**
+     * @throws Exception if the refresh fails on the final attempt.
+     */
     public function execute($queue): void
     {
         $result = SocialStream::$plugin->token->refreshToken($this->siteId, $this->provider);
 
         if ($result['success']) {
             SocialStream::info('Token refresh succeeded for site ' . $this->siteId . ' (attempt ' . ($this->attempt + 1) . ')');
+            return;
+        }
+
+        // The provider rejected the credential outright (refreshToken() sets the
+        // flag on OAuthException 190). Retrying replays a request Meta has already
+        // refused, so stop here — the CP banner is the signal, and the cron skips
+        // this connection from now on.
+        if ($this->needsReauth()) {
+            SocialStream::error(
+                'Token refresh for site ' . $this->siteId . ' (' . $this->provider . ') '
+                . 'was rejected outright; re-authorisation is required. '
+                . 'Abandoning the retry schedule. Error: ' . $result['error']
+            );
+
             return;
         }
 
@@ -57,12 +77,29 @@ class RefreshTokenJob extends BaseJob
             return;
         }
 
-        // All retries exhausted
-        SocialStream::error(
-            'Token refresh failed for site ' . $this->siteId
-            . ' after ' . ($this->attempt + 1) . ' attempts. Giving up. '
-            . 'Error: ' . $result['error']
-        );
+        // All retries exhausted. Throw rather than return: a silently "completed"
+        // job leaves no trace in the CP, which is how expired tokens went unnoticed
+        // for weeks. Failing here surfaces it on the Queue Manager instead.
+        $message = 'Token refresh failed for site ' . $this->siteId
+            . ' (' . $this->provider . ') after ' . ($this->attempt + 1) . ' attempts: '
+            . $result['error'];
+
+        SocialStream::error($message);
+
+        throw new Exception($message);
+    }
+
+    /**
+     * Whether the provider has flagged this connection as needing re-authorisation.
+     */
+    private function needsReauth(): bool
+    {
+        $connection = ConnectionRecord::findOne([
+            'siteId' => $this->siteId,
+            'provider' => $this->provider,
+        ]);
+
+        return $connection !== null && $connection->needsReauthAt !== null;
     }
 
     protected function defaultDescription(): ?string

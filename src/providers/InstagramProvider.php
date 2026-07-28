@@ -25,6 +25,12 @@ class InstagramProvider extends Provider
     public const TOKEN_BASE_URL = 'https://graph.instagram.com';
 
     /**
+     * Meta's error code for a token it will not accept — expired, revoked, or
+     * invalidated. Only re-authorisation clears it.
+     */
+    public const ERROR_CODE_INVALID_TOKEN = 190;
+
+    /**
      * Default maximum number of API pages to fetch when filtering reduces results.
      * Can be overridden via config/social-stream.php: 'maxFetchPages' => 5
      */
@@ -90,8 +96,20 @@ class InstagramProvider extends Provider
         while (count($collected) < $limit && $pagesUsed < $maxPages) {
             $page = $this->fetchMediaPage($userId, $token, $limit, $nextCursor, $siteId);
 
-            if ($page === null) {
-                break;
+            if ($page['error'] !== null) {
+                // A failure at any point fails the whole fetch, including one that
+                // interrupts pagination part-way. Returning the pages collected so
+                // far would be reported as a success, which would then clear the
+                // lastError and needsReauthAt just written and cache a silently
+                // truncated stream — the failure mode this release exists to close.
+                if ($pagesUsed > 0) {
+                    SocialStream::warning(
+                        'Stream fetch for site ' . $siteId . ' failed after ' . $pagesUsed
+                        . ' successful page(s); discarding the partial result.'
+                    );
+                }
+
+                return $this->streamErrorResponse($page['error']);
             }
 
             $posts = $page['posts'];
@@ -157,9 +175,9 @@ class InstagramProvider extends Provider
                 'error' => null,
             ];
         } catch (ClientException $e) {
-            $this->handleApiException($e, $siteId);
-            $body = json_decode($e->getResponse()->getBody()->getContents(), true);
-            return $this->errorResponse($body['error']['message'] ?? $e->getMessage());
+            // handleApiException() already consumed the response body, so take the
+            // message from its return value rather than re-reading the stream.
+            return $this->errorResponse($this->handleApiException($e, $siteId));
         } catch (GuzzleException $e) {
             $this->recordError($siteId, $e->getMessage());
             return $this->errorResponse('Failed to fetch profile: ' . $e->getMessage());
@@ -170,9 +188,14 @@ class InstagramProvider extends Provider
     // =========================================================================
 
     /**
-     * @return array{posts: Post[], nextCursor: string|null}|null
+     * Fetch a single page of media.
+     *
+     * A failed request is reported via the 'error' key rather than a null return,
+     * so callers can tell "the API said no" apart from "there are no more pages".
+     *
+     * @return array{posts: Post[], nextCursor: string|null, error: string|null}
      */
-    private function fetchMediaPage(string $userId, string $token, int $limit, ?string $after, int $siteId): ?array
+    private function fetchMediaPage(string $userId, string $token, int $limit, ?string $after, int $siteId): array
     {
         try {
             $client = Craft::createGuzzleClient();
@@ -193,7 +216,9 @@ class InstagramProvider extends Provider
             $data = json_decode($response->getBody()->getContents(), true);
 
             if (!isset($data['data'])) {
-                return null;
+                $message = 'Unexpected response from Instagram: no data property.';
+                $this->recordError($siteId, $message);
+                return ['posts' => [], 'nextCursor' => null, 'error' => $message];
             }
 
             $posts = [];
@@ -215,14 +240,18 @@ class InstagramProvider extends Provider
             return [
                 'posts' => $posts,
                 'nextCursor' => $nextCursor,
+                'error' => null,
             ];
         } catch (ClientException $e) {
-            $this->handleApiException($e, $siteId);
-            return null;
+            return [
+                'posts' => [],
+                'nextCursor' => null,
+                'error' => $this->handleApiException($e, $siteId),
+            ];
         } catch (GuzzleException $e) {
-            $this->recordError($siteId, $e->getMessage());
-            SocialStream::error('Stream fetch failed: ' . $e->getMessage());
-            return null;
+            $message = 'Stream fetch failed: ' . $e->getMessage();
+            $this->recordError($siteId, $message);
+            return ['posts' => [], 'nextCursor' => null, 'error' => $message];
         }
     }
 
@@ -386,17 +415,10 @@ class InstagramProvider extends Provider
 
             return $userId;
         } catch (ClientException $e) {
-            $body = json_decode($e->getResponse()->getBody()->getContents(), true);
-            $errorCode = $body['error']['code'] ?? null;
-            $errorMessage = $body['error']['message'] ?? $e->getMessage();
-
-            if ($errorCode === 190) {
-                SocialStream::error('Instagram token invalid for site ' . $siteId . ' (code 190): ' . $errorMessage);
-                $this->recordError($siteId, 'Instagram token is invalid. Please re-authorise in the control panel.');
-            } else {
-                SocialStream::error('Failed to get user ID for site ' . $siteId . ': ' . $errorMessage);
-                $this->recordError($siteId, 'Failed to get user ID: ' . $errorMessage);
-            }
+            // Delegate rather than hand-rolling the checks: this call runs on every
+            // cold miss for a connection with no stored user ID, so it needs the
+            // rate-limit cooldown as much as the media edge does.
+            $this->handleApiException($e, $siteId);
 
             return null;
         } catch (GuzzleException $e) {
@@ -409,10 +431,13 @@ class InstagramProvider extends Provider
     // =========================================================================
 
     /**
-     * Detect Instagram-specific rate-limit signatures (HTTP 429 / OAuthException code 4)
-     * and enter the base-class cooldown.
+     * Record an API error against the connection, and apply the resulting state:
+     * a rate-limit cooldown (HTTP 429 / OAuthException code 4), or the re-auth
+     * flag (code 190).
+     *
+     * @return string The error message, for returning to the caller.
      */
-    private function handleApiException(ClientException $e, int $siteId): void
+    private function handleApiException(ClientException $e, int $siteId): string
     {
         $statusCode = $e->getResponse()->getStatusCode();
         $body = json_decode($e->getResponse()->getBody()->getContents(), true);
@@ -420,12 +445,22 @@ class InstagramProvider extends Provider
         $errorCode = $body['error']['code'] ?? null;
 
         if ($statusCode === 429 || $errorCode === 4) {
+            $message = 'Rate limited: ' . $errorMessage;
             $this->enterRateLimitCooldown($siteId);
-            $this->recordError($siteId, 'Rate limited: ' . $errorMessage);
-            return;
+            $this->recordError($siteId, $message);
+
+            return $message;
         }
 
         $this->recordError($siteId, $errorMessage);
+
+        // 190 is Meta's catch-all for a token it won't accept — expired, revoked,
+        // or invalidated by a password change. None of those recover on their own.
+        if ($errorCode === self::ERROR_CODE_INVALID_TOKEN) {
+            $this->markNeedsReauth($siteId);
+        }
+
+        return $errorMessage;
     }
 
     // Settings helpers

@@ -18,11 +18,34 @@ use craft\db\ActiveRecord;
  * @property string|null $lastFetchAt
  * @property string|null $lastError
  * @property string|null $lastErrorAt
+ * @property string|null $needsReauthAt
  */
 class ConnectionRecord extends ActiveRecord
 {
     public static function tableName(): string
     {
         return '{{%socialstream_connections}}';
+    }
+
+    /**
+     * Between `composer update` and `php craft up`, the 1.3.0 column doesn't exist
+     * yet — and Yii throws UnknownPropertyException for an attribute that isn't in
+     * the table. Front-end requests and cron runs both read this on hot paths, so
+     * these accessors degrade to "not flagged" for that window rather than taking
+     * the site's stream down with it.
+     *
+     * Once the migration has run the column is a real attribute and Yii's
+     * __get()/__set() never reach these methods.
+     */
+    public function getNeedsReauthAt(): ?string
+    {
+        return $this->hasAttribute('needsReauthAt') ? $this->needsReauthAt : null;
+    }
+
+    public function setNeedsReauthAt(?string $value): void
+    {
+        if ($this->hasAttribute('needsReauthAt')) {
+            $this->needsReauthAt = $value;
+        }
     }
 }

@@ -103,6 +103,11 @@ class RefreshController extends Controller
                     $expiry = $this->formatExpiry($connection->tokenExpiresAt);
                     $this->stdout("  Site {$connection->siteId} ({$handle}): token refresh queued ({$expiry})" . PHP_EOL);
                     $tokensQueued++;
+                } elseif ($connection->needsReauthAt !== null) {
+                    $this->stdout(
+                        "  Site {$connection->siteId} ({$handle}): token rejected by provider — "
+                        . 're-authorise in the control panel' . PHP_EOL
+                    );
                 }
             }
         }
@@ -115,6 +120,12 @@ class RefreshController extends Controller
     {
         if ($this->forceToken) {
             return true;
+        }
+
+        // The provider has already rejected this credential; refreshing it can only
+        // fail the same way. Re-authorisation is the only route back.
+        if ($connection->needsReauthAt !== null) {
+            return false;
         }
 
         if ($connection->tokenExpiresAt === null) {

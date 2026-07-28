@@ -23,6 +23,14 @@ Then install the plugin via the Craft CP under **Settings > Plugins**, or from t
 php craft plugin/install social-stream
 ```
 
+### Updating
+
+Some releases include database migrations (1.3.0 adds a column to the connections table). Run Craft's update command after pulling a new version:
+
+```bash
+php craft up
+```
+
 ---
 
 ## Meta App Setup
@@ -180,6 +188,10 @@ Every call to `getStream()` returns a consistent object:
 | `error` | `string\|null` | Error message (null on success) |
 | `cached` | `bool` | Whether served from cache |
 
+An API failure always produces `success: false` with the provider's message in `error`. A failure part-way through pagination fails the whole fetch: posts already collected are discarded rather than returned as a shorter success, since a truncated stream cached for the full TTL is indistinguishable from a healthy one. Where a previous response is still inside its stale window, that is served instead.
+
+Failed responses are never cached *as responses*, but the failure itself is remembered for 5 minutes: during that window requests return the same error without another API call, so a sustained upstream outage costs one call per 5 minutes rather than one per page view. Recovery is automatic once the window passes.
+
 ### Post Properties
 
 Each `Post` object in `stream.data` provides:
@@ -272,6 +284,10 @@ A single cron entry handles both stream cache pre-warming and Instagram token re
 
 Each run pushes a `RefreshStreamJob` per connection, and additionally queues a `RefreshTokenJob` for any connection whose Instagram token is within 7 days of expiry. No separate daily cron for token refresh is needed — it's handled opportunistically.
 
+Token refresh happens **only** on this path, so a cron that silently never runs will let a token expire with nothing else to signal it. Verify yours actually fires — `cron` uses a minimal `PATH`, so an unqualified `php` that works in your shell may not resolve there.
+
+`RefreshTokenJob` retries on a 1 → 5 → 30 minute backoff and then fails the job, so an unrecoverable refresh is visible in the CP's Queue Manager. A credential the provider has rejected outright is the exception: retrying it is pointless, so the job stops immediately and the cron skips the connection from then on, reporting it in the command output. The signal in that case is the CP banner — see [Instagram has rejected this token](#instagram-has-rejected-this-token).
+
 **Cadence:** set this to roughly half of your configured `cacheDuration` (default: 60 minutes → every 30 minutes). That gives one pre-warm per fresh window plus a safety margin if a cron run is missed.
 
 **Pick random minute offsets.** The example above uses `7,37` rather than `0,30` or `*/30`. Running exactly on the hour means every Social Stream install hits Meta's API at the same instant, which strains their rate limits and slows your own requests. Choose any two minute values 30 apart that suit your infrastructure.
@@ -326,7 +342,7 @@ The response matches the same contract as `craft.socialStream.getStream()`.
 
 When a token is connected, the **Connection** tab displays a health panel showing:
 
-- **Token status** — green (valid), amber (expiring within 7 days), red (expired)
+- **Token status** — green (valid), amber (expiring within 7 days), red (expired, or rejected by the provider)
 - **Token expiry date**
 - **Last successful fetch** timestamp
 - **Last error** message and timestamp
@@ -335,8 +351,10 @@ When a token is connected, the **Connection** tab displays a health panel showin
 
 Two action buttons are available:
 
-- **Test Connection** — makes a `GET /me` call and displays the account name and type
+- **Test Connection** — makes a `GET /me` call and displays the account name and type. This is a live call even when the connection is flagged as needing re-authorisation, so using it clears the flag on a connection that has recovered. It deliberately leaves **Last successful fetch** and **Last error** alone: it fetches no posts, so it has nothing to say about the stream.
 - **Refresh Stream Now** — queues a background stream refresh immediately
+
+**Last successful fetch** is only stamped by a stream fetch that actually returned posts — not by cache hits, failed requests, or a profile call — so a stale timestamp is meaningful rather than merely quiet. **Last error** persists until a stream fetch succeeds.
 
 ---
 
@@ -359,6 +377,7 @@ The plugin caches stream responses using Craft's cache component (respects your 
 - **Cache duration** is configurable per site (default: 60 minutes).
 - **Stale-while-revalidate**: expired cache data is served immediately while a background job refreshes the content.
 - **Stampede protection**: mutex locks prevent multiple simultaneous API calls when the cache expires.
+- **Failure backoff**: a failed fetch is remembered for 5 minutes and replayed from that memory, so an upstream outage can't turn every uncached request into a live API call. Failed responses themselves are never cached as content.
 - **Cache clearing**: use **Utilities > Caches > Invalidate data caches > Social Stream data** in the CP, or run `php craft invalidate-tags/social-stream` from the CLI.
 
 ---
@@ -381,7 +400,19 @@ This avoids any session confusion with personal Instagram accounts you may be si
 
 ### Token has expired
 
-The token must be refreshed before its 60-day expiry. Set up the cron job (`php craft social-stream/token/refresh`) to handle this automatically. You can also re-authorise from the **Connection** tab.
+The token must be refreshed before its 60-day expiry. Set up the consolidated cron (`php craft social-stream/refresh`) to handle this automatically — it queues a token refresh once a token is within 7 days of expiring. You can also re-authorise from the **Connection** tab.
+
+If a token expired anyway, check that the cron is genuinely running before looking anywhere else — a crontab entry that fails every time is silent. Simulate cron's stripped environment with `env -i /bin/sh -c '<your cron line>'`; if it fails there but works in your shell, use the absolute binary path from `which php` in the crontab.
+
+The plugin logs every refresh outcome to `storage/logs/social-stream-*.log`, so `grep -iE 'token refresh|refreshed token'` is the fastest way to tell "the refresh is being rejected" from "the refresh never ran".
+
+### Instagram has rejected this token
+
+Distinct from an expired token: the provider returned OAuthException code 190, meaning the credential was expired, revoked, or invalidated (e.g. by an Instagram password change). Meta will not refresh a token in this state, so re-authorising from the **Connection** tab is the only route back.
+
+While the connection is in this state the plugin suspends stream API calls rather than repeating a request it knows will fail, and the cron stops queueing token refreshes for it — Meta will not refresh a credential it has already refused.
+
+The flag clears in three ways: re-authorising, a successful **Test Connection**, or the hourly probe. The probe lets a single stream request through every 60 minutes; if the rejection was transient and the credential works again, that request succeeds and the flag clears with no intervention. A genuinely dead token simply fails the probe, and suppression continues at a cost of one API call an hour.
 
 ### Wrong account type
 
@@ -399,8 +430,8 @@ Some fields (e.g. `like_count`, `comments_count`) may not be returned depending 
 
 The Connection Health panel on the **Connection** tab provides at-a-glance diagnostics:
 
-- A red token status means the token has expired — re-authorise or check your cron setup.
-- A "Last Error" entry shows the most recent API failure.
+- A red token status means either the stored expiry has passed — re-authorise, and check your cron setup, since the refresh should have run 7 days earlier — or that Instagram has rejected the token outright, which only re-authorising fixes.
+- A "Last Error" entry shows the most recent API failure. It's cleared by the next successful fetch, so an empty entry alongside a stale "Last successful fetch" is itself a signal.
 - An active rate-limit cooldown means the API is temporarily suppressed.
 
 Use the **Test Connection** button to verify the API is responding correctly.

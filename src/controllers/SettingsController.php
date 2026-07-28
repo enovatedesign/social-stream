@@ -41,6 +41,7 @@ class SettingsController extends Controller
 
         $isExpiringSoon = $tokenService->isTokenExpiringSoon($siteId, 'instagram');
         $isExpired = $tokenService->isTokenExpired($siteId, 'instagram');
+        $needsReauth = $connection->needsReauthAt !== null;
         $hasToken = $decryptedToken !== null;
 
         $rateLimitKey = 'social-stream:rate-limited:instagram:' . $siteId;
@@ -58,6 +59,7 @@ class SettingsController extends Controller
             'hasToken' => $hasToken,
             'isExpiringSoon' => $isExpiringSoon,
             'isExpired' => $isExpired,
+            'needsReauth' => $needsReauth,
             'isRateLimited' => $isRateLimited,
             'apiVersion' => InstagramProvider::API_VERSION,
         ]);

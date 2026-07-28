@@ -38,7 +38,7 @@ class SocialStream extends Plugin
 {
     public static SocialStream $plugin;
 
-    public string $schemaVersion = '1.0.0';
+    public string $schemaVersion = '1.1.0';
 
     public bool $hasCpSection = true;
 

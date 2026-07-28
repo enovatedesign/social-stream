@@ -10,6 +10,7 @@ use DateTime;
 use enovate\socialstream\providers\InstagramProvider;
 use enovate\socialstream\records\ConnectionRecord;
 use enovate\socialstream\SocialStream;
+use GuzzleHttp\Exception\ClientException;
 use GuzzleHttp\Exception\GuzzleException;
 
 /**
@@ -173,6 +174,7 @@ class TokenService extends Component
         $connection->tokenExpiresAt = $result['expiresAt'];
         $connection->lastError = null;
         $connection->lastErrorAt = null;
+        $connection->needsReauthAt = null;
 
         if (!$connection->save()) {
             SocialStream::error('Failed to save connection record after token exchange.');
@@ -237,13 +239,15 @@ class TokenService extends Component
                 return null;
             }
 
-            $expiresAt = (new DateTime())->modify("+{$expiresIn} seconds")->format('Y-m-d H:i:s');
+            $expiresAt = DateTimeHelper::currentUTCDateTime()
+                ->modify("+{$expiresIn} seconds")
+                ->format('Y-m-d H:i:s');
 
             return [
                 'token' => $token,
                 'expiresAt' => $expiresAt,
             ];
-        } catch (\GuzzleHttp\Exception\ClientException $e) {
+        } catch (ClientException $e) {
             $responseBody = $e->getResponse()->getBody()->getContents();
             SocialStream::error('Long-lived token exchange failed (HTTP ' . $e->getResponse()->getStatusCode() . '): ' . $responseBody);
             return null;
@@ -296,16 +300,51 @@ class TokenService extends Component
                 return ['success' => false, 'error' => $error];
             }
 
-            $expiresAt = (new DateTime())->modify("+{$expiresIn} seconds")->format('Y-m-d H:i:s');
+            // UTC, to match how it is read back: the CP renders it and
+            // RefreshController parses it with helpers that treat a bare DB string
+            // as UTC, and its sibling columns are stored that way too.
+            $expiresAt = DateTimeHelper::currentUTCDateTime()
+                ->modify("+{$expiresIn} seconds")
+                ->format('Y-m-d H:i:s');
 
             $connection->accessToken = $this->encrypt($newToken);
             $connection->tokenExpiresAt = $expiresAt;
             $connection->lastError = null;
             $connection->lastErrorAt = null;
-            $connection->save();
+            $connection->needsReauthAt = null;
+
+            if (!$connection->save()) {
+                $error = 'Instagram issued a refreshed token but it could not be saved: '
+                    . json_encode($connection->getErrors());
+                SocialStream::error($error);
+
+                return ['success' => false, 'error' => $error];
+            }
 
             SocialStream::info('Successfully refreshed token for site ' . $siteId . '. Expires ' . $expiresAt);
             return ['success' => true, 'error' => null];
+        } catch (ClientException $e) {
+            $body = json_decode($e->getResponse()->getBody()->getContents(), true);
+            $error = 'Token refresh failed: ' . ($body['error']['message'] ?? $e->getMessage());
+
+            $connection->lastError = $error;
+            $connection->lastErrorAt = DateTimeHelper::currentUTCDateTime()->format('Y-m-d H:i:s');
+
+            // Meta won't refresh a token it has already rejected — re-authorising
+            // is the only route back, so say so rather than retrying forever.
+            if (($body['error']['code'] ?? null) === InstagramProvider::ERROR_CODE_INVALID_TOKEN) {
+                $connection->needsReauthAt ??= DateTimeHelper::currentUTCDateTime()->format('Y-m-d H:i:s');
+            }
+
+            if (!$connection->save()) {
+                SocialStream::error(
+                    'Could not record the rejected-token state for site ' . $siteId . ': '
+                    . json_encode($connection->getErrors())
+                );
+            }
+
+            SocialStream::warning($error);
+            return ['success' => false, 'error' => $error];
         } catch (GuzzleException $e) {
             $error = 'Token refresh failed: ' . $e->getMessage();
             $connection->lastError = $error;
@@ -358,10 +397,16 @@ class TokenService extends Component
             return false;
         }
 
-        $expiresAt = new DateTime($record->tokenExpiresAt);
-        $warningDate = (new DateTime())->modify("+{$days} days");
+        // toDateTime() reads a bare DB string as UTC, matching how the column is
+        // written. Comparing against a system-timezone "now" is safe: DateTime
+        // comparisons are absolute instants, not wall-clock strings.
+        $expiresAt = DateTimeHelper::toDateTime($record->tokenExpiresAt);
 
-        return $expiresAt <= $warningDate;
+        if ($expiresAt === false) {
+            return false;
+        }
+
+        return $expiresAt <= (new DateTime())->modify("+{$days} days");
     }
 
     /**
@@ -378,7 +423,13 @@ class TokenService extends Component
             return true;
         }
 
-        return new DateTime($record->tokenExpiresAt) <= new DateTime();
+        $expiresAt = DateTimeHelper::toDateTime($record->tokenExpiresAt);
+
+        if ($expiresAt === false) {
+            return true;
+        }
+
+        return $expiresAt <= new DateTime();
     }
 
     /**

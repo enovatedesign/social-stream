@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.3.0 - 2026-07-28
+
+> Contains a schema change. Run `php craft up` (or `php craft migrate/all`) after updating.
+
+### Added
+
+- Connections now record a `needsReauthAt` timestamp when the provider rejects the stored credential outright (Instagram OAuthException code 190 — expired, revoked, or invalidated by a password change). The CP reports "Instagram has rejected this token" with the date it was first seen, instead of inferring the state from a stored expiry date that may itself be stale. Cleared automatically by a successful fetch, token refresh, or re-authorisation.
+- While a connection is flagged, stream API calls are suspended rather than repeating a request that cannot succeed. A single request is let through every 60 minutes as a probe, so a transient rejection recovers unattended; **Test Connection** and re-authorising also clear the flag immediately. The consolidated cron stops queueing token refreshes for a rejected credential and says so in its output.
+- A failed stream fetch is now remembered for 5 minutes and replayed from that memory rather than repeated. Failed responses are still never cached as content, but without this an upstream outage would mean one live API call per uncached request, since there is no cached response to serve.
+
+### Fixed
+
+- **An Instagram API failure was reported as a successful, empty stream.** `fetchMediaPage()` returned `null` both for "no more pages" and for a failed request, and `doFetchStream()` treated the failure as the end of pagination — returning `success: true` with zero posts. That response was then cached for the full TTL, and the successful-fetch bookkeeping cleared the `lastError` that had been written moments earlier. The net effect: a dead token produced a silently blank stream, a fresh "Last Successful Fetch" timestamp, and no error anywhere in the CP. Failures now return `success: false` with the provider's message, are never cached, and leave `lastError` intact.
+- A failure part-way through pagination now fails the whole fetch rather than returning the pages collected so far. Returning them would be reported as a success, which would clear the error state just recorded and cache a silently truncated stream — the same failure mode in a subtler form.
+- `RefreshTokenJob` now throws once its retries are exhausted, so an unrecoverable token refresh appears as a failed job in the Queue Manager. It previously logged an error and returned normally, which Craft treats as success — leaving no trace in the CP.
+- `TokenService::refreshToken()` checks the result of saving the connection record. A failed write previously still logged "Successfully refreshed token" and reported success, which would have silently discarded a newly issued token.
+- `doFetchProfile()` no longer tries to read the Guzzle response body twice on a `ClientException`; the stream had already been consumed, so the provider's error message was being replaced by Guzzle's generic one.
+- Timestamps written to the connection record now use UTC consistently — `lastFetchAt` and `lastErrorAt` previously used PHP's default timezone in the provider, and `tokenExpiresAt` was written in the system timezone while being read back by helpers that treat a bare database string as UTC. On installs not running UTC, the CP displayed the token expiry offset from its true value and the 7-day refresh threshold was measured against the wrong instant. Existing expiry values are reinterpreted as UTC on upgrade — a shift of at most a few hours against a 60-day window, corrected at the next refresh.
+- A successful **Test Connection** no longer stamps `lastFetchAt` or clears `lastError`. It fetches no posts, so it has nothing to report about the stream; erasing the error someone opened the CP to read was actively unhelpful. It still clears the re-auth flag, which is what it does prove.
+- `RefreshTokenJob` no longer works through its retry schedule for a credential the provider has rejected outright. The first rejection sets the flag, and the job stops there instead of replaying three more requests Meta has already refused.
+- `resolveUserId()` now routes its API errors through the same handler as the rest of the provider, so a rate limit hit on the user-ID lookup enters the cooldown instead of being retried on every cold miss.
+- The re-auth flag is read through accessors that tolerate the column being absent, so the window between `composer update` and `php craft up` degrades to "not flagged" rather than throwing on every front-end stream fetch and cron run.
+- The `ClientException` path in `TokenService::refreshToken()` checks its `save()` too, so a failure to persist the rejected-token state is logged rather than silently leaving the connection unflagged.
+
 ## 1.2.1 - 2026-07-28
 
 ### Added

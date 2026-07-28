@@ -41,6 +41,7 @@ class Install extends Migration
             'lastFetchAt' => $this->dateTime(),
             'lastError' => $this->text(),
             'lastErrorAt' => $this->dateTime(),
+            'needsReauthAt' => $this->dateTime(),
             'dateCreated' => $this->dateTime()->notNull(),
             'dateUpdated' => $this->dateTime()->notNull(),
             'uid' => $this->uid(),
