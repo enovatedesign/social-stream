@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.2.1 - 2026-07-28
+
+### Added
+
+- README troubleshooting section for Meta's "Insufficient developer role" error during authorisation, which happens when the browser is signed into an Instagram account that hasn't accepted the tester invite.
+
+### Fixed
+
+- `icon-mask.svg` is now a flat single-colour shape rather than a clipped, multi-layer drawing, so Craft's CP nav renders the masked icon correctly.
+- `RefreshStreamJob` failed with "Calling unknown method: `enovate\socialstream\jobs\RefreshStreamJob::hasEventHandlers()`" on every background refresh in 1.2.0. Queue jobs extend `BaseObject` rather than `Component`, so they have no instance-level event methods; the new refresh event is now dispatched through Yii's class-level `Event` API instead. Because the failure happened before the cache write, affected installs stopped refreshing their streams entirely — anyone on 1.2.0 should upgrade. Subscribing is unchanged: `Event::on(RefreshStreamJob::class, RefreshStreamJob::EVENT_AFTER_REFRESH_STREAM, ...)`.
+
 ## 1.2.0 - 2026-05-08
 
 ### Added

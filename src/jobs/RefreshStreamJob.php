@@ -8,6 +8,7 @@ use craft\queue\BaseJob;
 use enovate\socialstream\events\StreamRefreshedEvent;
 use enovate\socialstream\models\Post;
 use enovate\socialstream\SocialStream;
+use yii\base\Event;
 
 /**
  * Queue job that refreshes cached stream data in the background.
@@ -46,7 +47,10 @@ class RefreshStreamJob extends BaseJob
             // Capture the previous payload before overwriting it so we can detect
             // whether the refresh actually produced different data. Skip the read
             // entirely when nothing is subscribed to the event.
-            $hasHandlers = $this->hasEventHandlers(self::EVENT_AFTER_REFRESH_STREAM);
+            //
+            // Queue jobs extend BaseObject rather than Component, so they have no
+            // instance-level event methods — the class-level Event API is used instead.
+            $hasHandlers = Event::hasHandlers($this, self::EVENT_AFTER_REFRESH_STREAM);
             $previousFingerprint = $hasHandlers
                 ? $this->fingerprintResponse(SocialStream::$plugin->streamCache->getStream($options)['data'])
                 : null;
@@ -55,7 +59,7 @@ class RefreshStreamJob extends BaseJob
             SocialStream::info('Background stream refresh completed for site ' . $this->siteId . ' (' . $this->provider . ')');
 
             if ($hasHandlers && $this->fingerprintResponse($response) !== $previousFingerprint) {
-                $this->trigger(self::EVENT_AFTER_REFRESH_STREAM, new StreamRefreshedEvent([
+                Event::trigger($this, self::EVENT_AFTER_REFRESH_STREAM, new StreamRefreshedEvent([
                     'siteId' => (int) $this->siteId,
                     'provider' => $this->provider,
                     'options' => $options,

@@ -365,6 +365,20 @@ The plugin caches stream responses using Craft's cache component (respects your 
 
 ## Troubleshooting
 
+### "Insufficient developer role" during authorisation
+
+If the OAuth flow lands on a Meta error page reading **"Insufficient developer role"** (URL contains `instagram.com/oauth/authorize/third_party/error/`), the browser is logged into an Instagram account that hasn't been added as a tester on the Meta App.
+
+Before clicking **Authorise** (or **Re-authorise**), make sure the browser is logged into the **same Instagram account** that was added as an Instagram tester in step 3.2 of the Meta App setup — and that the tester invite has been accepted at [instagram.com/accounts/manage_access/](https://www.instagram.com/accounts/manage_access/).
+
+The cleanest way to be certain:
+
+1. Open an incognito/private window.
+2. Go to [instagram.com](https://www.instagram.com/) and log in with the account you want to connect.
+3. Return to the Craft CP **Connection** tab and click **Authorise**.
+
+This avoids any session confusion with personal Instagram accounts you may be signed into elsewhere.
+
 ### Token has expired
 
 The token must be refreshed before its 60-day expiry. Set up the cron job (`php craft social-stream/token/refresh`) to handle this automatically. You can also re-authorise from the **Connection** tab.
