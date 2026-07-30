@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.1 - 2026-07-30
+
+### Changed
+
+- Reworked the README setup steps, which were in places misleading or no longer matched Meta's UI. A "Before you start" section now states up front that authorisation has to happen on a publicly accessible URL, and lists the two steps that require the Instagram account login — the tester-role approval and the OAuth flow itself. The plugin-side steps are now step 4 of a single numbered sequence rather than a separate section, the "Add account" button under Meta's "Generate access tokens" is explicitly called out as unnecessary, and the note about which environment to authorise in refers to the domain entered in the **OAuth redirect URIs** field rather than "production".
+
 ## 1.3.0 - 2026-07-28
 
 > Contains a schema change. Run `php craft up` (or `php craft migrate/all`) after updating.

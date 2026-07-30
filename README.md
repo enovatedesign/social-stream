@@ -33,7 +33,16 @@ php craft up
 
 ---
 
-## Meta App Setup
+## Before you start
+
+Authorisation has to happen on a publicly accessible URL, because Instagram's OAuth callback needs to reach your site. You can't complete it against a local domain unless you tunnel it out with [expose.dev](https://expose.dev/), `herd share`, or similar.
+
+You don't need the Instagram credentials yourself, but someone who has them must be available for two steps:
+
+- Under "3. Set up Instagram login", step 2, item 4 — to approve the Instagram tester role
+- Everything under "4. Instagram login and Authorise" — essentially going through the Instagram OAuth flow from the Craft CMS control panel
+
+## Setup
 
 ### 1. Create a Meta App
 
@@ -54,29 +63,32 @@ php craft up
 ### 3. Set up Instagram login
 
 1. Click on "API setup with Instagram login", then note your **Instagram App ID** and **Instagram App Secret**.
-2. Click on the "Roles" link, which will take you off to the App roles screen in a new browser tab, where...
+2. Click on the "Roles" link (under "2. Generate access tokens"), which will take you off to the App roles screen in a new browser tab, where...
     1. Click on the "Add People" button in the top right.
-    2. Select "Instagram tester" under "Additional roles for this app".
+    2. Select "Instagram Tester" under "Additional roles for this app".
     3. Enter the Instagram account username into the search field and select the account, click the "Add" button.
-    4. Then login to that Instagram account and go to https://www.instagram.com/accounts/manage_access/ where you will need to approve the tester role.
+    4. Then log in to that Instagram account and go to https://www.instagram.com/accounts/manage_access/ where you will need to approve the Instagram tester role.
     5. Return to the previous browser tab.
-3. Under "2. Generate access tokens" expand the section by clicking on the down chevron, then click "Add account".
-4. Sign in with the Instagram account you want to connect and complete Meta's prompts. You don't need to copy any token — the plugin will handle the token exchange when you click **Authorise** in the Craft CP (next section).
-5. Under "4. Set up Instagram business login" click on the "Setup" button, then step through the wizard and add the following URL to the **OAuth redirect URIs** field: `https://your-site.com/actions/social-stream/auth/callback`. Replace "your-site.com" with your Craft installation's **primary site** domain (including "www." if your site uses it) — the plugin always uses the primary site's base URL for the callback, even on multi-site installs.
+3. Back under "2. Generate access tokens", you don't need to click "Add account" or copy a token — the plugin handles the token exchange when you click **Authorise** later.
+4. Under "4. Set up Instagram business login" click on the "Setup" button, add the following URL to the **OAuth redirect URIs** field: `https://your-site.com/actions/social-stream/auth/callback`. Replace "your-site.com" with your Craft installation's **primary site** domain (including "www." if your site uses it) — the plugin always uses the primary site's base URL for the callback, even on multi-site installs.
 
-## Plugin setup & quick start
+The value you enter into the **OAuth redirect URIs** field should be a publicly accessible URL as this is where the callback from Instagram will land. You can set it up with a public staging URL and then add a production callback URL later. URLs can be added/removed at Meta under "4. Set up Instagram business login" by clicking on the "Business login settings" button.
+
+### 4. Instagram login and Authorise
 
 **Please note:**
 
+- The next steps need to be performed by someone who has both the "Access Social Stream" permission in Craft CMS and the Instagram account login.
 - You can use environment variables for your **Instagram App ID** and **Instagram App Secret**, if so set those up now.
-- These steps are best followed in your production environment.
+- These steps must be performed in the environment whose domain you entered in the **OAuth redirect URIs** field earlier.
 - The plugin exchanges the authorisation code for a long-lived token (60-day validity) and stores it encrypted in the database. A masked preview of the token and its expiry date are shown in the Connection Status panel.
 
-1. In Craft CMS navigate to "Social Stream" from the left hand menu
-2. On the "Connection" tab enter your **Instagram App ID** and **Instagram App Secret** (or your environment variable names if you set them up), then click "Authorise".
-3. You'll need to login to the Instagram account and approve the connection.
-4. Review the settings on the "Configuration" tab.
-5. On the "Stream Preview" tab click on "Load Stream Preview".
+1. Log in to the Instagram account first.
+2. In Craft CMS navigate to "Social Stream" from the left hand menu
+3. On the "Connection" tab enter your **Instagram App ID** and **Instagram App Secret** (or your environment variable names if you set them up), then click "Authorise".
+4. You'll be taken to Instagram to approve the connection, returning you to the Social Stream Connection tab, where the Connection Status panel should now show **Status: Connected**.
+
+With that done the connection is set up. You may want to review the settings on the "Configuration" tab, and on the "Stream Preview" tab click on "Load Stream Preview".
 
 ## Meta App Review
 
@@ -388,7 +400,7 @@ The plugin caches stream responses using Craft's cache component (respects your 
 
 If the OAuth flow lands on a Meta error page reading **"Insufficient developer role"** (URL contains `instagram.com/oauth/authorize/third_party/error/`), the browser is logged into an Instagram account that hasn't been added as a tester on the Meta App.
 
-Before clicking **Authorise** (or **Re-authorise**), make sure the browser is logged into the **same Instagram account** that was added as an Instagram tester in step 3.2 of the Meta App setup — and that the tester invite has been accepted at [instagram.com/accounts/manage_access/](https://www.instagram.com/accounts/manage_access/).
+Before clicking **Authorise** (or **Re-authorise**), make sure the browser is logged into the **same Instagram account** that was added as an Instagram tester in step 3.2 of the setup — and that the tester invite has been accepted at [instagram.com/accounts/manage_access/](https://www.instagram.com/accounts/manage_access/).
 
 The cleanest way to be certain:
 
