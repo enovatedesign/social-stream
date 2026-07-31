@@ -36,6 +36,19 @@ class InstagramProvider extends Provider
      */
     private const DEFAULT_MAX_FETCH_PAGES = 3;
 
+    /**
+     * Default number of media items to request per API page when filtering is
+     * active. Deliberately independent of the caller's limit — see
+     * {@see doFetchStream()}. Can be overridden via config/social-stream.php:
+     * 'fetchPageSize' => 50
+     */
+    private const DEFAULT_FETCH_PAGE_SIZE = 25;
+
+    /**
+     * The largest page size Instagram will accept on the media edge.
+     */
+    private const MAX_FETCH_PAGE_SIZE = 100;
+
     private const STREAM_FIELDS = 'id,caption,media_type,media_url,thumbnail_url,permalink,timestamp,like_count,comments_count,is_shared_to_feed,media_product_type,shortcode,owner';
 
     private const CHILDREN_FIELDS = 'id,media_type,media_url,thumbnail_url,permalink,timestamp';
@@ -89,12 +102,15 @@ class InstagramProvider extends Provider
 
         $needsFiltering = $mediaType !== null || $excludeNonFeed;
         $maxPages = $this->maxFetchPages();
+
+        $pageSize = $this->resolvePageSize($limit, $needsFiltering, $this->configuredPageSize());
+
         $collected = [];
         $nextCursor = $after;
         $pagesUsed = 0;
 
         while (count($collected) < $limit && $pagesUsed < $maxPages) {
-            $page = $this->fetchMediaPage($userId, $token, $limit, $nextCursor, $siteId);
+            $page = $this->fetchMediaPage($userId, $token, $pageSize, $nextCursor, $siteId);
 
             if ($page['error'] !== null) {
                 // A failure at any point fails the whole fetch, including one that
@@ -193,15 +209,17 @@ class InstagramProvider extends Provider
      * A failed request is reported via the 'error' key rather than a null return,
      * so callers can tell "the API said no" apart from "there are no more pages".
      *
+     * @param int $pageSize How many items to request — the API page size, not the
+     *                      caller's limit. {@see doFetchStream()} for why they differ.
      * @return array{posts: Post[], nextCursor: string|null, error: string|null}
      */
-    private function fetchMediaPage(string $userId, string $token, int $limit, ?string $after, int $siteId): array
+    private function fetchMediaPage(string $userId, string $token, int $pageSize, ?string $after, int $siteId): array
     {
         try {
             $client = Craft::createGuzzleClient();
             $query = [
                 'fields' => self::STREAM_FIELDS,
-                'limit' => $limit,
+                'limit' => $pageSize,
                 'access_token' => $token,
             ];
 
@@ -503,6 +521,45 @@ class InstagramProvider extends Provider
     {
         $config = Craft::$app->config->getConfigFromFile('social-stream');
         return $config['maxFetchPages'] ?? self::DEFAULT_MAX_FETCH_PAGES;
+    }
+
+    private function configuredPageSize(): int
+    {
+        $config = Craft::$app->config->getConfigFromFile('social-stream');
+
+        return (int) ($config['fetchPageSize'] ?? self::DEFAULT_FETCH_PAGE_SIZE);
+    }
+
+    /**
+     * How many items to request per API page.
+     *
+     * Deliberately not the caller's limit whenever a filter is active. Filtering
+     * happens here rather than at the API, so requesting exactly $limit items
+     * hands the filter only $limit candidates — the tighter the limit, the fewer
+     * survive it. A homepage asking for 3 feed-shared posts from a reels-heavy
+     * account would scan 3 posts, keep one, and render a near-empty grid. Asking
+     * for a full page instead gives the filter enough to work with, and usually
+     * satisfies the limit from a single call rather than exhausting the page
+     * budget.
+     *
+     * With no filter active the limit *is* the right page size: every item
+     * returned is kept, so a larger page is wasted transfer.
+     *
+     * @param int $configuredPageSize Raw config value; clamped here to the range
+     *                                Instagram accepts, so a typo in config can't
+     *                                fail every request.
+     */
+    private function resolvePageSize(int $limit, bool $needsFiltering, int $configuredPageSize): int
+    {
+        if (!$needsFiltering) {
+            return $limit;
+        }
+
+        $pageSize = max(1, min($configuredPageSize, self::MAX_FETCH_PAGE_SIZE));
+
+        // A limit larger than the page size still needs pages big enough to reach
+        // it, otherwise the page budget is spent before the limit can be met.
+        return max($limit, $pageSize);
     }
 
     private function apiUrl(string $path): string

@@ -16,7 +16,7 @@ return [
     'Instagram App ID' => 'Instagram App ID',
     'Instagram App Secret' => 'Instagram App Secret',
     'Default Post Limit' => 'Default Post Limit',
-    'The default number of posts to fetch (1–100).' => 'The default number of posts to fetch (1–100).',
+    "The default number of posts to return when a template doesn't specify one (1–100)." => "The default number of posts to return when a template doesn't specify one (1–100).",
     'Exclude Non-Feed Posts' => 'Exclude Non-Feed Posts',
     'Exclude posts not shared to the main feed (e.g. Trial reels).' => 'Exclude posts not shared to the main feed (e.g. Trial reels).',
     'Cache Duration' => 'Cache Duration',

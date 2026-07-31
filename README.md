@@ -115,7 +115,7 @@ An **Authorise** button starts the OAuth flow to connect your Instagram account.
 
 | Setting | Description | Default |
 |---|---|---|
-| Default Post Limit | Number of posts to fetch (1-100). | 25 |
+| Default Post Limit | Number of posts to return when a template doesn't specify one (1-100). | 25 |
 | Exclude Non-Feed Posts | Exclude posts not shared to the main feed (e.g. Reels-only). | Off |
 | Cache Duration | How long to cache stream data, in minutes. | 60 |
 
@@ -140,16 +140,26 @@ return [
     'excludeNonFeed' => true,
     'secureApiEndpoint' => false,
     'maxFetchPages' => 5,
+    'fetchPageSize' => 25,
 ];
 ```
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `defaultLimit` | `int` | `25` | Default number of posts to fetch (1-100) |
+| `defaultLimit` | `int` | `25` | Default number of posts to return when a template doesn't specify one (1-100) |
 | `excludeNonFeed` | `bool` | `false` | Exclude posts where `is_shared_to_feed` is false |
 | `cacheDuration` | `int` | `60` | Cache TTL in minutes |
 | `secureApiEndpoint` | `bool` | `false` | Enable the JSON API endpoint |
 | `maxFetchPages` | `int` | `3` | Max API pages to fetch when filtering reduces results |
+| `fetchPageSize` | `int` | `25` | Items requested per API page when filtering is active (1-100) |
+
+#### Filtering and `limit`
+
+`excludeNonFeed` and `mediaType` are applied by the plugin, not by Instagram — the API has no way to filter on them. The plugin therefore over-fetches: it requests `fetchPageSize` items per page and keeps paging, up to `maxFetchPages`, until it has collected `limit` posts that survive the filter.
+
+This matters most when `limit` is small. Asking for 3 posts does **not** mean only 3 posts are examined; a full page is fetched and filtered down. Without that, a template asking for 3 posts from an account where most posts are filtered out would render one or two tiles, or none at all.
+
+If a filtered stream is still returning fewer posts than you asked for, the account has fewer matching posts than `maxFetchPages × fetchPageSize` reaches back. Raise `fetchPageSize` first — it costs the same number of API calls — then `maxFetchPages`.
 
 ---
 

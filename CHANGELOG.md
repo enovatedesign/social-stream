@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.3.3 - 2026-07-31
+
+### Fixed
+
+- **A small `limit` combined with filtering returned almost nothing.** The caller's `limit` was passed straight through as the Instagram API's page size, but `excludeNonFeed` and `mediaType` are applied here rather than by the API — so asking for 3 posts fetched 3 candidates, and whatever the filter rejected was simply lost. The tighter the limit, the worse it got. On a reels-heavy account, where Instagram reports `is_shared_to_feed: false` for the overwhelming majority of posts, a homepage asking for 3 scanned 9 posts across the full 3-page budget and rendered 1. The API page size is now independent of the limit: when a filter is active the provider requests a full page (25 by default) and keeps paging until the limit is met, so the same request is typically satisfied by a single API call instead of exhausting the page budget. With no filter active the limit is still used as the page size, since every item returned is kept.
+
+### Added
+
+- `fetchPageSize` config setting — how many items to request per API page when filtering is active. Defaults to 25 and is clamped to 1–100, the range Instagram accepts. Raise it for accounts where the filter rejects nearly everything, to satisfy a limit in fewer API calls.
+
+### Changed
+
+- **Default Post Limit** now describes itself as the number of posts to *return*, not to *fetch*. The two were the same thing until this release; now that a filtered request over-fetches, "fetch" described what `fetchPageSize` does, and the setting read as though it capped API traffic. Wording only — the setting's behaviour is unchanged.
+
 ## 1.3.2 - 2026-07-31
 
 ### Fixed
