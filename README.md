@@ -167,7 +167,7 @@ return [
 }) %}
 
 {% if stream.success %}
-    {% for post in stream.data %}
+    {% for post in stream.data|filter(post => post.hasMedia()) %}
         <a href="{{ post.permalink }}">
             <img src="{{ post.images[0].url }}" alt="{{ post.caption }}">
         </a>
@@ -176,6 +176,8 @@ return [
     <p>Instagram feed is temporarily unavailable.</p>
 {% endif %}
 ```
+
+A post can arrive with nothing renderable attached — Instagram omits media URLs from posts it considers copyright-encumbered, and a carousel's children can fail to fetch. Filtering on `hasMedia()` keeps `images[0]` safe to index; without it, one such post is a fatal `Key "0" does not exist` error on the whole page.
 
 ### Parameters
 
@@ -224,7 +226,11 @@ Each `Post` object in `stream.data` provides:
 | `meta` | `array` | Provider-specific extras (e.g. `isSharedToFeed`, `mediaProductType`, `shortcode`) |
 | `raw` | `array` | Untransformed API response — escape hatch for debugging |
 
+`Post` also exposes a `hasMedia()` method — true when the post has an image, a video, or a carousel child that has one. Use it to skip posts with nothing to render, as in the example above.
+
 `PostMedia` exposes `type` (`'image'` or `'video'`), `url`, `thumbnailUrl`, `width`, `height`.
+
+Instagram omits `media_url` from a video's response when the media contains copyrighted content — typically a reel with licensed audio, and it can start happening to a post long after it was published. Those posts arrive with an empty `videos` array and their thumbnail in `images` instead, so they still render as a still that links out to `permalink`, which is where the video plays anyway. Check `videos|length` before reaching for a playable URL rather than assuming `meta.mediaType == 'VIDEO'` guarantees one.
 
 `PostAuthor` exposes `id`, `name`, `handle`, `url`, `avatarUrl`. For Instagram, only `id` and `handle` are populated from the stream response — call `craft.socialStream.getProfile()` for richer account data (username, profile picture, follower count).
 
@@ -438,6 +444,14 @@ If the Instagram API returns a rate-limit error (HTTP 429), the plugin enters a 
 
 Some fields (e.g. `like_count`, `comments_count`) may not be returned depending on your app's permissions or the media type. The plugin defaults missing values to `null` gracefully. Ensure your Meta App has the required permissions approved.
 
+### A video renders as a still image
+
+Instagram omits `media_url` from a video's response when the media contains copyrighted content — most often a reel with licensed audio. It can start doing so long after the post was published, so a feed that has been working for months can change behaviour with no code change at either end.
+
+There is nothing to fix on the Craft side: no URL is served, so the video cannot be embedded. The plugin falls back to the post's thumbnail, which Instagram still provides, so the post renders as a still. Link it to `post.permalink` and the video plays on Instagram, where the audio licence applies. The post is identifiable in a template as `post.meta.mediaType == 'VIDEO'` with an empty `post.videos` — enough to overlay a play badge if you want it to read as a video rather than a photo.
+
+If Instagram withholds the thumbnail too, the post has nothing renderable at all and `hasMedia()` returns false, so filtering on it (see [Fetching the Stream](#fetching-the-stream)) skips the post instead of failing the page.
+
 ### Using the health panel
 
 The Connection Health panel on the **Connection** tab provides at-a-glance diagnostics:
@@ -452,7 +466,7 @@ Use the **Test Connection** button to verify the API is responding correctly.
 
 ## API Version
 
-The plugin targets Instagram Graph API **v21.0** via `graph.facebook.com`. The version is centralised as a constant (`InstagramProvider::API_VERSION`) and displayed in the Connection Health panel.
+The plugin targets Instagram Graph API **v21.0** via `graph.instagram.com`. The version is centralised as a constant (`InstagramProvider::API_VERSION`) and displayed in the Connection Health panel.
 
 ---
 

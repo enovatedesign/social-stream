@@ -333,13 +333,31 @@ class InstagramProvider extends Provider
             return [[$media], []];
         }
 
-        if ($mediaType === 'VIDEO' && $url !== null) {
-            $media = new PostMedia();
-            $media->type = PostMedia::TYPE_VIDEO;
-            $media->url = $url;
-            $media->thumbnailUrl = $thumbnailUrl;
+        if ($mediaType === 'VIDEO') {
+            if ($url !== null) {
+                $media = new PostMedia();
+                $media->type = PostMedia::TYPE_VIDEO;
+                $media->url = $url;
+                $media->thumbnailUrl = $thumbnailUrl;
 
-            return [[], [$media]];
+                return [[], [$media]];
+            }
+
+            // Meta omits media_url from video responses when the media contains
+            // copyrighted content — common on reels with licensed audio, and it
+            // can start happening to a post long after it was published. The
+            // thumbnail is still served, so fall back to it as an image rather
+            // than handing back a post with no media at all: consumers can still
+            // render the post and link out to the permalink, which is where the
+            // video plays anyway.
+            if ($thumbnailUrl !== null) {
+                $media = new PostMedia();
+                $media->type = PostMedia::TYPE_IMAGE;
+                $media->url = $thumbnailUrl;
+                $media->thumbnailUrl = $thumbnailUrl;
+
+                return [[$media], []];
+            }
         }
 
         // CAROUSEL_ALBUM: parent has no direct media; children carry it.

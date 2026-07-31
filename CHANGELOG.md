@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.3.2 - 2026-07-31
+
+### Fixed
+
+- **A video Instagram withholds the media URL for came back with no media at all.** Meta omits `media_url` from a video's response when the media contains copyrighted content — most often a reel with licensed audio — and it starts doing so long after the post was published, so a working feed breaks with no code change. `buildMedia()` required a URL before it would build anything, so those posts came back with empty `images`, empty `videos` and no children, and any template indexing `post.images[0]` died with `Key "0" does not exist as the sequence/mapping is empty`. The thumbnail is still served in those responses, so it is now used as the post's image: the post renders as a still linking out to its permalink, which is where the video plays anyway. `videos` is deliberately left empty rather than carrying an entry with a null `url`, so a template's `videos|length` check still means "there is something to play".
+- `Post::hasMedia()` now counts carousel children. It only looked at the post's own `images` and `videos`, which are always empty on an album — so the one method templates would reach for as a "can I render this?" guard reported false for every carousel.
+- The API Version section of the README named the wrong host. It has said the plugin talks to `graph.facebook.com` since 1.0.0; `InstagramProvider` has always used `graph.instagram.com`. Documentation only — no behaviour changed.
+
+### Changed
+
+- The README's stream example filters on `hasMedia()`, and the Post Properties section documents both that method and the withheld-`media_url` behaviour. The example previously indexed `images[0]` unguarded, which is the pattern that fails as soon as one post arrives without media.
+- A troubleshooting entry covers a video rendering as a still image, since the cause is entirely upstream and there is nothing to fix on the Craft side. It notes how to tell such a post apart from a genuine photo (`meta.mediaType` of `VIDEO` with an empty `videos`) for templates that want to overlay a play badge.
+
 ## 1.3.1 - 2026-07-30
 
 ### Changed

@@ -46,11 +46,26 @@ class Post extends Model
     public array $raw = [];
 
     /**
-     * Whether the post has any media (image or video) attached.
+     * Whether the post has anything renderable attached — an image, a video, or
+     * a child that has one.
+     *
+     * Carousel albums carry no media of their own, so the children have to count
+     * here for templates to be able to use this as a "can I render this post?"
+     * guard without silently dropping every album.
      */
     public function hasMedia(): bool
     {
-        return $this->images !== [] || $this->videos !== [];
+        if ($this->images !== [] || $this->videos !== []) {
+            return true;
+        }
+
+        foreach ($this->children as $child) {
+            if ($child->hasMedia()) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
