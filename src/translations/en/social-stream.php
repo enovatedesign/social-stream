@@ -65,6 +65,7 @@ return [
     'No access token available. Please authorise first.' => 'No access token available. Please authorise first.',
     'Unknown error.' => 'Unknown error.',
     'Stream refresh job has been queued.' => 'Stream refresh job has been queued.',
+    'A stream refresh is already queued for this site.' => 'A stream refresh is already queued for this site.',
 
     // API endpoint
     'API Token' => 'API Token',

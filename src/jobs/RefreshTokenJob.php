@@ -17,6 +17,8 @@ use yii\base\Exception;
  */
 class RefreshTokenJob extends BaseJob
 {
+    use DedupedPushTrait;
+
     public ?int $siteId = null;
 
     public string $provider;
@@ -35,6 +37,33 @@ class RefreshTokenJob extends BaseJob
      * @throws Exception if the refresh fails on the final attempt.
      */
     public function execute($queue): void
+    {
+        // The queue mutex guards which runner reserves a job, not how many run at once:
+        // of two concurrent refreshes the loser is refused and flags a healthy
+        // connection for re-auth, which the cron then skips permanently.
+        $mutex = Craft::$app->getMutex();
+        $lockName = 'social-stream:token-refresh:' . ($this->siteId ?? 0) . ':' . $this->provider;
+
+        if (!$mutex->acquire($lockName)) {
+            SocialStream::info(
+                'Token refresh for site ' . $this->siteId . ' (' . $this->provider . ') '
+                . 'skipped: another refresh for this connection is already running.'
+            );
+
+            return;
+        }
+
+        try {
+            $this->refresh();
+        } finally {
+            $mutex->release($lockName);
+        }
+    }
+
+    /**
+     * @throws Exception if the refresh fails on the final attempt.
+     */
+    private function refresh(): void
     {
         $result = SocialStream::$plugin->token->refreshToken($this->siteId, $this->provider);
 
@@ -123,48 +152,55 @@ class RefreshTokenJob extends BaseJob
      * Used by the cron entry path. The job's own retry self-reschedule in execute()
      * bypasses this check on purpose — retries must push even while the previous
      * attempt is still in the queue with fail=true.
+     *
+     * @return bool Whether a job was pushed.
      */
-    public static function pushIfNotQueued(int $siteId, string $provider): void
+    public static function pushIfNotQueued(int $siteId, string $provider): bool
     {
         $tag = self::dedupTag($siteId, $provider);
-        $like = ['like', 'description', $tag];
 
-        Craft::$app->getDb()->usePrimary(function () use ($like) {
-            Craft::$app->getDb()->createCommand()
-                ->delete('{{%queue}}', [
-                    'and',
-                    $like,
-                    ['fail' => true],
-                    ['<', 'timePushed', time() - 86400],
-                ])
-                ->execute();
+        return self::withPushLock($tag, static function () use ($siteId, $provider, $tag): bool {
+            $like = ['like', 'description', $tag];
+
+            Craft::$app->getDb()->usePrimary(function () use ($like) {
+                Craft::$app->getDb()->createCommand()
+                    ->delete('{{%queue}}', [
+                        'and',
+                        $like,
+                        ['fail' => true],
+                        ['<', 'timePushed', time() - 86400],
+                    ])
+                    ->execute();
+            });
+
+            $pending = Craft::$app->getDb()->usePrimary(fn() => (new Query())
+                ->from('{{%queue}}')
+                ->where($like)
+                ->andWhere(['fail' => false])
+                ->exists());
+
+            if ($pending) {
+                return false;
+            }
+
+            $recentlyFailed = Craft::$app->getDb()->usePrimary(fn() => (new Query())
+                ->from('{{%queue}}')
+                ->where($like)
+                ->andWhere(['fail' => true])
+                ->andWhere(['>=', 'timePushed', time() - 7200])
+                ->exists());
+
+            if ($recentlyFailed) {
+                return false;
+            }
+
+            Craft::$app->queue->push(new static([
+                'siteId' => $siteId,
+                'provider' => $provider,
+            ]));
+
+            return true;
         });
-
-        $pending = Craft::$app->getDb()->usePrimary(fn() => (new Query())
-            ->from('{{%queue}}')
-            ->where($like)
-            ->andWhere(['fail' => false])
-            ->exists());
-
-        if ($pending) {
-            return;
-        }
-
-        $recentlyFailed = Craft::$app->getDb()->usePrimary(fn() => (new Query())
-            ->from('{{%queue}}')
-            ->where($like)
-            ->andWhere(['fail' => true])
-            ->andWhere(['>=', 'timePushed', time() - 7200])
-            ->exists());
-
-        if ($recentlyFailed) {
-            return;
-        }
-
-        Craft::$app->queue->push(new static([
-            'siteId' => $siteId,
-            'provider' => $provider,
-        ]));
     }
 
     private static function dedupTag(int $siteId, string $provider): string

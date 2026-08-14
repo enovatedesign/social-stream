@@ -112,11 +112,13 @@ class SettingsController extends Controller
         $settingsRecord = SettingsRecord::findOne(['siteId' => $siteId]);
         $limit = $settingsRecord->defaultLimit ?? 25;
 
-        RefreshStreamJob::pushIfNotQueued($siteId, ['limit' => $limit], 'instagram');
+        $queued = RefreshStreamJob::pushIfNotQueued($siteId, ['limit' => $limit], 'instagram');
 
         return $this->asJson([
             'success' => true,
-            'message' => Craft::t('social-stream', 'Stream refresh job has been queued.'),
+            'message' => $queued
+                ? Craft::t('social-stream', 'Stream refresh job has been queued.')
+                : Craft::t('social-stream', 'A stream refresh is already queued for this site.'),
         ]);
     }
 

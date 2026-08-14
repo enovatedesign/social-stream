@@ -42,8 +42,10 @@ class TokenController extends Controller
         $provider = 'instagram';
 
         if ($this->site !== null) {
-            RefreshTokenJob::pushIfNotQueued($this->site, $provider);
-            $this->stdout("Site {$this->site} ({$provider}): token refresh queued." . PHP_EOL);
+            $this->stdout(RefreshTokenJob::pushIfNotQueued($this->site, $provider)
+                ? "Site {$this->site} ({$provider}): token refresh queued." . PHP_EOL
+                : "Site {$this->site} ({$provider}): token refresh already queued." . PHP_EOL);
+
             return ExitCode::OK;
         }
 
@@ -54,12 +56,18 @@ class TokenController extends Controller
             return ExitCode::OK;
         }
 
+        $queued = 0;
+
         foreach ($connections as $connection) {
-            RefreshTokenJob::pushIfNotQueued($connection->siteId, $provider);
-            $this->stdout("  Site {$connection->siteId} ({$provider}): token refresh queued." . PHP_EOL);
+            if (RefreshTokenJob::pushIfNotQueued($connection->siteId, $provider)) {
+                $this->stdout("  Site {$connection->siteId} ({$provider}): token refresh queued." . PHP_EOL);
+                $queued++;
+            } else {
+                $this->stdout("  Site {$connection->siteId} ({$provider}): token refresh already queued." . PHP_EOL);
+            }
         }
 
-        $this->stdout('Done. ' . count($connections) . ' job(s) queued.' . PHP_EOL);
+        $this->stdout("Done. {$queued} job(s) queued." . PHP_EOL);
         return ExitCode::OK;
     }
 }

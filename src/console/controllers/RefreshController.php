@@ -20,8 +20,8 @@ use yii\console\ExitCode;
  *   2. Checks each connection's token expiry and queues a RefreshTokenJob when
  *      a token is within TokenService::REFRESH_THRESHOLD_DAYS of expiry.
  *
- * Safe to run on every web host — both jobs dedupe via the Craft queue table
- * (primary DB read) before pushing.
+ * Safe to run on every web host — both jobs hold a DB-backed lock across the queue-table
+ * check and the push, so simultaneous hosts produce one job, not one each.
  *
  * Usage:
  *   php craft social-stream/refresh                             # all sites, all providers
@@ -94,15 +94,22 @@ class RefreshController extends Controller
             }
 
             foreach ($connections as $connection) {
-                RefreshStreamJob::pushIfNotQueued($connection->siteId, [], $handle);
-                $this->stdout("  Site {$connection->siteId} ({$handle}): stream refresh queued" . PHP_EOL);
-                $streamsQueued++;
+                if (RefreshStreamJob::pushIfNotQueued($connection->siteId, [], $handle)) {
+                    $this->stdout("  Site {$connection->siteId} ({$handle}): stream refresh queued" . PHP_EOL);
+                    $streamsQueued++;
+                } else {
+                    $this->stdout("  Site {$connection->siteId} ({$handle}): stream refresh already queued" . PHP_EOL);
+                }
 
                 if ($this->shouldRefreshToken($connection)) {
-                    RefreshTokenJob::pushIfNotQueued($connection->siteId, $handle);
                     $expiry = $this->formatExpiry($connection->tokenExpiresAt);
-                    $this->stdout("  Site {$connection->siteId} ({$handle}): token refresh queued ({$expiry})" . PHP_EOL);
-                    $tokensQueued++;
+
+                    if (RefreshTokenJob::pushIfNotQueued($connection->siteId, $handle)) {
+                        $this->stdout("  Site {$connection->siteId} ({$handle}): token refresh queued ({$expiry})" . PHP_EOL);
+                        $tokensQueued++;
+                    } else {
+                        $this->stdout("  Site {$connection->siteId} ({$handle}): token refresh already queued ({$expiry})" . PHP_EOL);
+                    }
                 } elseif ($connection->needsReauthAt !== null) {
                     $this->stdout(
                         "  Site {$connection->siteId} ({$handle}): token rejected by provider — "

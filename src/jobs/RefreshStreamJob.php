@@ -19,6 +19,8 @@ use yii\base\Event;
  */
 class RefreshStreamJob extends BaseJob
 {
+    use DedupedPushTrait;
+
     public const EVENT_AFTER_REFRESH_STREAM = 'afterRefreshStream';
 
     public ?int $siteId = null;
@@ -104,8 +106,10 @@ class RefreshStreamJob extends BaseJob
     /**
      * Push this job to the queue, but only if an identical job isn't already queued
      * or running. Safe to call from every web host in a load-balanced setup.
+     *
+     * @return bool Whether a job was pushed.
      */
-    public static function pushIfNotQueued(int $siteId, array $options, string $provider): void
+    public static function pushIfNotQueued(int $siteId, array $options, string $provider): bool
     {
         $fingerprint = md5(json_encode([
             'class' => static::class,
@@ -114,25 +118,30 @@ class RefreshStreamJob extends BaseJob
             'options' => $options,
         ]));
 
+        // Per-host cooldown: Craft's default cache isn't shared, so this damps local
+        // churn only — the fleet-wide guard is the lock below.
         $cacheKey = 'social-stream:job-dedup:' . $fingerprint;
-
-        if (Craft::$app->cache->get($cacheKey) !== false) {
-            return;
-        }
-
         $tag = self::dedupTag($siteId, $provider);
 
-        if (!self::queueIsClear($tag)) {
-            return;
-        }
+        return self::withPushLock($tag, static function () use ($siteId, $options, $provider, $cacheKey, $tag): bool {
+            if (Craft::$app->cache->get($cacheKey) !== false) {
+                return false;
+            }
 
-        Craft::$app->queue->push(new static([
-            'siteId' => $siteId,
-            'provider' => $provider,
-            'options' => $options,
-        ]));
+            if (!self::queueIsClear($tag)) {
+                return false;
+            }
 
-        Craft::$app->cache->set($cacheKey, true, 60);
+            Craft::$app->queue->push(new static([
+                'siteId' => $siteId,
+                'provider' => $provider,
+                'options' => $options,
+            ]));
+
+            Craft::$app->cache->set($cacheKey, true, 60);
+
+            return true;
+        });
     }
 
     /**

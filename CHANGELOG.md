@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.3.4 - 2026-08-14
+
+### Fixed
+
+- **Every host in a load-balanced setup queued its own copy of the cron's jobs.** The queue-table dedupe had no lock across it, so hosts sharing a crontab all saw an empty queue and all pushed. Both jobs now hold a database-backed lock across the check and the push — one job per connection, not one per host. Craft's default mutex is the database, so no Redis is needed.
+- **A concurrent token refresh could lock a healthy connection out.** Craft's queue mutex decides which runner reserves a job, not how many run at once, so duplicate token jobs could refresh the same credential together. The loser was refused and wrote `needsReauthAt` over the successful refresh, after which the cron skipped that connection until someone re-authorised by hand. `RefreshTokenJob` now locks before refreshing.
+
+> {note} Both are structural races found by code review, not reported failures.
+
+### Changed
+
+- `pushIfNotQueued()` on both jobs now returns `bool` rather than `void`. Callers previously reported success unconditionally — `social-stream/refresh` counted jobs it had skipped, and **Refresh Stream Now** claimed a job was queued when it wasn't.
+
 ## 1.3.3 - 2026-07-31
 
 ### Fixed
