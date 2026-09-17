@@ -19,7 +19,7 @@ The YouTube Data API v3 is used for all API communication, with Google OAuth 2.0
 | Feed endpoint | Single `GET /{userId}/media` | Two-step: get uploads playlist ID, then `GET playlistItems.list` + batched `GET videos.list` |
 | Rate limits | HTTP 429 / error code 4, per-account | Quota-based: 10,000 units/day, per-project |
 | Push notifications | Meta webhook, HMAC-SHA256 | WebSub (PubSubHubbub), HMAC-SHA1, 10-day lease renewal, Atom XML |
-| Content types | IMAGE, VIDEO, CAROUSEL_ALBUM | Regular videos, Shorts (no official API field — heuristic detection) |
+| Content types | IMAGE, VIDEO, CAROUSEL_ALBUM | Regular videos, Shorts (no official API field — detected via oEmbed at the `/shorts/` URL) |
 | Thumbnails | Single `media_url` | Multiple sizes: default (120x90) through maxres (1280x720) |
 
 ---
@@ -373,40 +373,109 @@ Return:
 
 ### Shorts detection
 
-YouTube has no official Shorts field. Use a heuristic mirroring Instagram's `is_shared_to_feed` approach:
+The Data API has no `isShort` field, but YouTube's oEmbed endpoint gives a reliable signal when queried with the **`/shorts/` URL form**: it returns portrait dimensions for a genuine Short and landscape for everything else.
+
+```
+GET https://www.youtube.com/oembed?url=https://www.youtube.com/shorts/{VIDEO_ID}&format=json
+
+Short    → {"width": 113, "height": 200, …}   portrait
+Standard → {"width": 200, "height": 113, …}   landscape
+```
+
+**Rule: `height > width` means it's a Short.**
+
+- YouTube checks the video — requesting a standard video at a `/shorts/` URL still returns 200×113, so the URL form can't produce false positives.
+- The `/watch?v=` form is useless here: it returns 200×113 for everything, Shorts included.
+- No API key, no OAuth, **no quota cost**.
+- Tested on 32 videos across 4 channels (16 Shorts, 16 standard): 32/32 correct.
+
+**Rejected approaches:**
+
+- **Duration (≤ 60s or ≤ 180s)** — the Shorts limit is now 3 minutes, so duration can't separate a 90s Short from a 90s video, and testing turned up a 64-second Short that a 60s cut-off misses.
+- **`#shorts` hashtag** — optional; most Shorts don't carry it.
+- **`oardefault.jpg` thumbnail** — missed 3 of 16 Shorts in testing.
+
+#### Implementation
 
 ```php
-private function isShort(array $video): bool
+private const SHORTS_CACHE_PREFIX = 'social-stream:youtube-short:';
+
+/**
+ * Returns [videoId => bool] for every ID whose Shorts status could be determined.
+ * Unresolved IDs are omitted rather than defaulted, so a transient failure is
+ * never cached as a permanent "not a Short".
+ */
+private function resolveShorts(array $videoIds): array
 {
-    $durationSeconds = $this->parseDuration($video['contentDetails']['duration'] ?? 'PT0S');
+    $results = [];
+    $toFetch = [];
 
-    if ($durationSeconds > 180) {
-        return false; // Shorts max duration is 3 minutes (as of October 2024)
+    foreach ($videoIds as $videoId) {
+        // Stored as 1/0, not bool — cache->get() returns false on a miss.
+        $cached = Craft::$app->cache->get(self::SHORTS_CACHE_PREFIX . $videoId);
+
+        if ($cached === false) {
+            $toFetch[] = $videoId;
+        } else {
+            $results[$videoId] = (bool) $cached;
+        }
     }
 
-    $title = strtolower($video['snippet']['title'] ?? '');
-    $description = strtolower($video['snippet']['description'] ?? '');
+    $client = Craft::createGuzzleClient(['timeout' => 5, 'http_errors' => false]);
+    $requests = function () use ($toFetch, $client) {
+        foreach ($toFetch as $videoId) {
+            yield $videoId => fn() => $client->getAsync('https://www.youtube.com/oembed', [
+                'query' => [
+                    'url' => 'https://www.youtube.com/shorts/' . $videoId,
+                    'format' => 'json',
+                ],
+            ]);
+        }
+    };
 
-    if (str_contains($title, '#shorts') || str_contains($description, '#shorts')) {
-        return true;
-    }
+    (new \GuzzleHttp\Pool($client, $requests(), [
+        'concurrency' => 10,
+        'fulfilled' => function ($response, $videoId) use (&$results) {
+            if ($response->getStatusCode() !== 200) {
+                return;
+            }
 
-    // <=60s without the hashtag — assume Short (original Shorts limit)
-    // 61–180s without the hashtag — ambiguous, treat as regular
-    return $durationSeconds <= 60;
+            $data = Json::decodeIfJson((string) $response->getBody());
+            $width = (int) ($data['width'] ?? 0);
+            $height = (int) ($data['height'] ?? 0);
+
+            if ($width <= 0 || $height <= 0) {
+                return;
+            }
+
+            $results[$videoId] = $height > $width;
+            // No expiry: a video's Shorts status never changes.
+            Craft::$app->cache->set(self::SHORTS_CACHE_PREFIX . $videoId, (int) $results[$videoId], 0);
+        },
+    ]))->promise()->wait();
+
+    return $results;
 }
 ```
 
-**Limitations to document:**
+Call it once per batch of video IDs (after `videos.list`, before `mapToPost()`), then pass `$isShort = $shorts[$id] ?? false` into the mapping.
 
-- False positives: short regular videos (teasers, music clips, announcements) ≤ 60s
-- False negatives: Shorts between 61–180 seconds without the hashtag
+Notes:
+
+- **Cache forever, per video, untagged.** Don't attach the `social-stream:site-provider:{siteId}:youtube` tag dependency — WebSub notifications invalidate that tag, and wiping per-video Shorts results on every upload would re-trigger a lookup for the whole feed.
+- **Never cache a failure.** Non-200s, timeouts, and missing dimensions leave the ID unresolved. It's treated as `VIDEO` for that fetch only and retried on the next cache miss.
+- **Concurrent, not sequential.** A cold 50-video page is 50 outbound requests; a Guzzle pool at concurrency 10 with a 5s timeout keeps that to a few seconds worst case. Warm fetches make none.
+- **Known oEmbed gaps.** oEmbed returns an error for private videos and videos with embedding disabled (`status.embeddable = false`), so those will stay unresolved unless the fallback below is enabled.
+
+#### Fallback: `/shorts/` redirect check
+
+For IDs oEmbed couldn't resolve, a plain `GET https://www.youtube.com/shorts/{VIDEO_ID}` with redirects **disabled** (`'allow_redirects' => false`) distinguishes the two: **200** for a Short, **303 redirect to `/watch`** for a standard video (36/36 in testing). It's heavier (a full HTML page), so use it only for oEmbed misses, and cache the result the same way.
+
+Check the redirect's `Location` actually points at `/watch` before classifying as standard — any other redirect (e.g. a cookie-consent interstitial for servers in the EU/UK) should leave the ID unresolved, not mark it as a video.
 
 Future improvements (not in v1):
 
-- Aspect-ratio signal from the `player` part (`embedWidth` / `embedHeight`) — adds another part to the call but no quota cost.
-- Configurable `maxShortDuration` via `config/social-stream.php` (default 60).
-- Monitor YouTube's issue tracker [#232112727](https://issuetracker.google.com/issues/232112727) for an official field.
+- Monitor YouTube's issue tracker [#232112727](https://issuetracker.google.com/issues/232112727) for an official field, which would replace both lookups.
 
 ### ISO 8601 duration parsing
 
@@ -716,6 +785,7 @@ Branch on `post.provider` — there's no interface boilerplate because both prov
 | Get channel profile | 1 | Cached |
 | 50 videos (cold miss) | ~3 | playlist items page + video details batch (+ 1 for uploads ID on very first miss) |
 | 12 videos (cold miss) | ~2–3 | Same shape |
+| Shorts detection (oEmbed) | 0 | Outside the Data API. One request per video not already in the Shorts cache |
 
 ### Rules
 
@@ -784,7 +854,8 @@ On HTTP 403 with `reason: quotaExceeded`:
   - [ ] `selectThumbnail()`: maxres → standard → high → medium → default fallback
   - [ ] `parseDuration()` via `DateInterval`
   - [ ] `formatDuration()` → `'1:30'` / `'2:15:03'`
-  - [ ] `isShort()` heuristic (duration + `#shorts` hashtag)
+  - [ ] `resolveShorts()`: concurrent oEmbed lookups at the `/shorts/` URL, `height > width` → Short, cached per video with no expiry (stored as `1`/`0`, untagged), failures left unresolved and uncached
+  - [ ] `/shorts/` redirect fallback for oEmbed misses (200 → Short, 303 to `/watch` → standard, anything else → unresolved)
   - [ ] Post-fetch filter on `mediaType`, over-fetch up to `maxFetchPages`
   - [ ] Return `nextPageToken` as `nextCursor`
   - [ ] Quota tracking: increment `social-stream:youtube-quota:{Y-m-d-PT}` on each API call
@@ -832,21 +903,23 @@ On HTTP 403 with `reason: quotaExceeded`:
   - [ ] Quota guidance (including how to request an increase via Google Cloud Console)
   - [ ] WebSub setup notes
   - [ ] Updated cron recommendations (include `social-stream/web-sub/renew`)
-  - [ ] Shorts heuristic limitations and future `maxShortDuration` config option
+  - [ ] How Shorts are detected (outbound requests to youtube.com on first sight of each video; private and embed-disabled videos rely on the fallback)
 - [ ] Update `CHANGELOG.md`
 - [ ] Unit tests:
   - [ ] `YouTubeProvider` mapping — raw API payload → `Post` + `PostMedia` + `meta` shape
   - [ ] Thumbnail fallback chain (maxres → default)
   - [ ] `parseDuration()` edge cases (`PT0S`, `PT59S`, `PT1H`, `PT2H15M3S`, `P1DT2H`, malformed strings)
   - [ ] `formatDuration()` — seconds → `'1:30'` / `'2:15:03'`
-  - [ ] `isShort()` heuristic branches (boundaries at 60s and 180s; with/without `#shorts`)
+  - [ ] `resolveShorts()` — portrait → Short, landscape → standard, zero/missing dimensions and non-200 → unresolved and not cached, cache hit skips HTTP, cached `0` is not treated as a miss
+  - [ ] Redirect fallback — 200, 303 to `/watch`, and a non-`/watch` redirect (stays unresolved)
   - [ ] WebSub signature verification (HMAC-SHA1, in contrast to Instagram's SHA256)
   - [ ] OAuth state encoding/decoding — JSON and legacy-integer backward compat
   - [ ] `CacheService::streamKey()` — YouTube normalises `excludeNonFeed` to `0`
   - [ ] `Post::toArray()` / `Post::fromArray()` round-trips a YouTube post losslessly (including `meta`)
 - [ ] Manual testing:
   - [ ] Full Google OAuth flow with a real YouTube channel
-  - [ ] Fetch regular videos and Shorts; verify classification
+  - [ ] Fetch regular videos and Shorts; verify classification, including a Short over 60 seconds and a video with embedding disabled
+  - [ ] Cold-cache fetch time for a 50-video page (oEmbed lookups) and a warm fetch making no oEmbed requests
   - [ ] `mediaType` filter: `VIDEO` only, `SHORT` only, all
   - [ ] Pagination via `nextCursor`
   - [ ] Cache behaviour: hit / stale / miss
@@ -863,7 +936,7 @@ On HTTP 403 with `reason: quotaExceeded`:
 
 ## Risks & open questions
 
-1. **Shorts detection reliability.** The duration + `#shorts` heuristic will have false positives (short regular videos) and false negatives (Shorts 61–180s without the hashtag, which YouTube enabled in October 2024). Document clearly. Consider `maxShortDuration` config override in a follow-up. Watch [issuetracker.google.com#232112727](https://issuetracker.google.com/issues/232112727) for an official field.
+1. **Shorts detection relies on undocumented behaviour.** The oEmbed `/shorts/` dimension signal is accurate in testing but not a documented contract — YouTube could change it without notice. The redirect fallback is an independent signal, and unresolved videos degrade to `VIDEO` rather than failing the stream. Watch [issuetracker.google.com#232112727](https://issuetracker.google.com/issues/232112727) for an official field.
 
 2. **Quota limits.** 10,000 units/day is generous for typical usage but tight for multi-site installations with frequent cache misses. Document how to request an increase via Google Cloud Console.
 
