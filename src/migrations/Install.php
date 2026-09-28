@@ -36,12 +36,20 @@ class Install extends Migration
             'appId' => $this->text(),
             'appSecret' => $this->text(),
             'accessToken' => $this->text(),
+            // Google's refresh token. Instagram has no equivalent — its long-lived
+            // access token is the durable credential — so it stays null there.
+            'refreshToken' => $this->text(),
             'providerUserId' => $this->string(),
             'tokenExpiresAt' => $this->dateTime(),
             'lastFetchAt' => $this->dateTime(),
             'lastError' => $this->text(),
             'lastErrorAt' => $this->dateTime(),
             'needsReauthAt' => $this->dateTime(),
+            // YouTube push notifications: when the current WebSub lease runs out, the
+            // secret the subscription was made with, and when one last arrived.
+            'websubExpiresAt' => $this->dateTime(),
+            'webhookSecret' => $this->text(),
+            'webhookLastReceivedAt' => $this->dateTime(),
             'dateCreated' => $this->dateTime()->notNull(),
             'dateUpdated' => $this->dateTime()->notNull(),
             'uid' => $this->uid(),

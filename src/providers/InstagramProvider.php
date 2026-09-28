@@ -31,12 +31,6 @@ class InstagramProvider extends Provider
     public const ERROR_CODE_INVALID_TOKEN = 190;
 
     /**
-     * Default maximum number of API pages to fetch when filtering reduces results.
-     * Can be overridden via config/social-stream.php: 'maxFetchPages' => 5
-     */
-    private const DEFAULT_MAX_FETCH_PAGES = 3;
-
-    /**
      * Default number of media items to request per API page when filtering is
      * active. Deliberately independent of the caller's limit — see
      * {@see doFetchStream()}. Can be overridden via config/social-stream.php:
@@ -502,12 +496,6 @@ class InstagramProvider extends Provider
     // Settings helpers
     // =========================================================================
 
-    private function defaultLimitForSite(int $siteId): int
-    {
-        $record = SettingsRecord::findOne(['siteId' => $siteId]);
-        return $record->defaultLimit ?? SocialStream::$plugin->getSettings()->defaultLimit ?? 25;
-    }
-
     private function excludeNonFeedForSite(int $siteId): bool
     {
         $record = SettingsRecord::findOne(['siteId' => $siteId]);
@@ -517,17 +505,9 @@ class InstagramProvider extends Provider
         return (bool) SocialStream::$plugin->getSettings()->excludeNonFeed;
     }
 
-    private function maxFetchPages(): int
-    {
-        $config = Craft::$app->config->getConfigFromFile('social-stream');
-        return $config['maxFetchPages'] ?? self::DEFAULT_MAX_FETCH_PAGES;
-    }
-
     private function configuredPageSize(): int
     {
-        $config = Craft::$app->config->getConfigFromFile('social-stream');
-
-        return (int) ($config['fetchPageSize'] ?? self::DEFAULT_FETCH_PAGE_SIZE);
+        return (int) ($this->pluginConfig()['fetchPageSize'] ?? self::DEFAULT_FETCH_PAGE_SIZE);
     }
 
     /**

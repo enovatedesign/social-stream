@@ -1,5 +1,36 @@
 # Changelog
 
+## 1.4.0 - 2026-09-28
+
+### Added
+
+- **YouTube support.** A second provider, reached the same way as Instagram: `craft.socialStream.getStream({ provider: 'youtube' })`. Videos and Shorts map into the same `Post` model, so a template that already renders an Instagram feed renders a YouTube one with no new interface to learn — everything provider-specific lives in `post.meta`. Connect a channel on the new **YouTube** tab in the CP after creating a Google Cloud project with the YouTube Data API v3 enabled.
+- **Shorts detection.** The Data API has no field saying whether a video is a Short, so the plugin infers it: YouTube's oEmbed endpoint returns portrait dimensions at a `/shorts/` URL for a genuine Short and landscape for everything else, with a `/shorts/` page request as a fallback for the private and embed-disabled videos oEmbed refuses. Answers are cached permanently per video (a video's status can't change), failures are never cached, and the lookups are concurrent under a time budget so a cold 50-video page can't stall a page load. Filter with `mediaType: 'SHORT'` or `'VIDEO'`, or read `post.meta.isShort`. Duration is deliberately not used — the Shorts limit is now 3 minutes, so length can't separate a 90-second Short from a 90-second video.
+- **Push notifications for new uploads.** The plugin subscribes to the channel's Atom feed through Google's WebSub hub, so an upload triggers a background refresh within seconds instead of waiting out the cache. Notifications are authenticated with HMAC-SHA1 over a per-connection secret. Leases cap at 10 days and are renewed by a self-rescheduling queue job, or by the new `php craft social-stream/web-sub/renew` cron — both idempotent, so running both is safe. If neither runs, the feed still updates via the existing refresh cron; push only decides whether that takes seconds or up to an hour.
+- **Google OAuth.** Access tokens last an hour and are renewed inline, under a lock, on the request that needs one — no cron involvement and nothing for an admin to act on. The permanent refresh token is the credential that matters, and when Google rejects it the plugin clears both tokens and says so in as many words, including that a 7-day cadence means the Google app is still in Testing mode. That failure mode is otherwise near-undiagnosable: the connection simply stops working every week.
+- **YouTube health panel** — channel, token state, refresh-token presence, WebSub lease, last notification, and the day's API quota against the 10,000-unit limit. The Push Notifications row carries a **Subscribe** / **Renew** button: subscribing is automatic on connect and renews itself, but a hub that was unreachable at that moment used to leave the connection with no way back except a console command. Plus **Test Connection**, **Refresh Stream Now** and **Disconnect**, which unsubscribes from the hub and forgets the channel while keeping the client credentials so it can be reconnected in one click.
+- **A Providers tab**, listing every registered provider with its status, connected account and last successful fetch, and a **Connect** or **Configure** button leading to that provider's own page. Providers get a page each rather than a tab each, so the settings screen doesn't grow a tab every time one is registered — and a provider added by another plugin now appears with a real status and a working page instead of being invisible in the CP.
+- `usesExcludeNonFeed()` on `base\Provider` — a provider returning `false` has the option normalised out of its cache keys. `enterRateLimitCooldown()` now takes an optional TTL, for a provider whose limit is a daily quota rather than a rolling window.
+- Config settings `shortsDetection`, `shortsRedirectFallback` and `shortsLookupBudget`.
+- `--provider` on `social-stream/token/refresh`, which previously only ever refreshed Instagram.
+
+### Fixed
+
+- **An option a provider ignores no longer splits its cache in two.** `excludeNonFeed` is an Instagram concept, and it was keyed into every provider's cache entries — both directly and through the settings hash. A provider that ignores the flag would have stored two identical copies of the same stream, keyed only on a value that changed nothing about it, and filled both with their own API calls.
+- **The JSON API endpoint returned a 500 on every request.** `ApiController` declared `enableCsrfValidation` as `bool`, but `yii\web\Controller` declares it untyped — and PHP treats a typed redeclaration in a subclass as a fatal error when the class is loaded, so the endpoint died before any of its code ran. Present since the endpoint shipped in 1.0.0; it is off by default, which is why it went unreported. The same mistake was caught in the new webhook controller, where it broke YouTube's subscription handshake.
+- **The Instagram App ID and Secret are no longer marked required in the CP form.** With one form now saving both providers' credentials, browser validation on the Instagram fields would have blocked a YouTube-only site from saving the page at all.
+
+### Changed
+
+- The **Connection** tab is gone: Instagram's credentials and health panel moved to its own page, reached from the Providers tab. The Stream Preview tab covers whichever providers are connected, with a picker when more than one is.
+- A connection that renews its access token inline is skipped by the cron's token-refresh step. A YouTube token expires hourly, so a threshold measured in days would have queued a job on every single run — and learned nothing, since the stream pre-warm already exercises the same renewal path and surfaces a dead refresh token once per run.
+- `Post::fromArray()` rebuilds a timestamp at the offset it was serialised with rather than converting it to the system timezone, making the cache round trip exactly reversible. The instant is unchanged, and Twig's `date` filter formats in the app's timezone either way, so nothing rendered changes.
+- `isConfigured()` reads the stored credential instead of asking for a usable token, so asking whether a provider is configured can no longer trigger an HTTP request to it.
+- **The connected account's name is now remembered whenever any profile is fetched**, not only when one happens to be cached. `Provider::fetchProfile()` records it, so the CP names the account after an OAuth connection, a Test Connection or a template call alike — previously a freshly connected YouTube channel showed its raw `UC…` identifier until something else fetched a profile.
+- **Test Connection** now caches the profile it fetched. It was throwing the response away, so the call was paid for twice and the CP had nothing to name the connected account with — which is why a healthy Instagram connection showed no account at all until a template happened to call `getProfile()`. The account name is also remembered for 30 days, well past the stream cache's TTL, so it doesn't blank out an hour later; failing all that, the table falls back to the identifier stored on the connection.
+
+> {warn} This release adds four columns to the connections table. Run `php craft up` after updating.
+
 ## 1.3.4 - 2026-08-14
 
 ### Fixed

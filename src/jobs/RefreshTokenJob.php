@@ -3,7 +3,6 @@
 namespace enovate\socialstream\jobs;
 
 use Craft;
-use craft\db\Query;
 use craft\queue\BaseJob;
 use enovate\socialstream\records\ConnectionRecord;
 use enovate\socialstream\SocialStream;
@@ -160,37 +159,7 @@ class RefreshTokenJob extends BaseJob
         $tag = self::dedupTag($siteId, $provider);
 
         return self::withPushLock($tag, static function () use ($siteId, $provider, $tag): bool {
-            $like = ['like', 'description', $tag];
-
-            Craft::$app->getDb()->usePrimary(function () use ($like) {
-                Craft::$app->getDb()->createCommand()
-                    ->delete('{{%queue}}', [
-                        'and',
-                        $like,
-                        ['fail' => true],
-                        ['<', 'timePushed', time() - 86400],
-                    ])
-                    ->execute();
-            });
-
-            $pending = Craft::$app->getDb()->usePrimary(fn() => (new Query())
-                ->from('{{%queue}}')
-                ->where($like)
-                ->andWhere(['fail' => false])
-                ->exists());
-
-            if ($pending) {
-                return false;
-            }
-
-            $recentlyFailed = Craft::$app->getDb()->usePrimary(fn() => (new Query())
-                ->from('{{%queue}}')
-                ->where($like)
-                ->andWhere(['fail' => true])
-                ->andWhere(['>=', 'timePushed', time() - 7200])
-                ->exists());
-
-            if ($recentlyFailed) {
+            if (!self::queueIsClear($tag)) {
                 return false;
             }
 

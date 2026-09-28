@@ -1,0 +1,157 @@
+{# Instagram's credentials and connection state. Included from settings/provider.twig. #}
+{% import '_includes/forms' as forms %}
+
+{% if instagram.hasToken %}
+    {% if instagram.needsReauth %}
+        <div class="pane" style="background: var(--ui-danger-bg-color, #fdd); padding: 12px 16px; margin-bottom: 24px; border-radius: 4px;">
+            <p style="margin: 0; color: var(--ui-danger-text-color, #c00);">
+                <strong>{{ 'Instagram has rejected this token' | t('social-stream') }}</strong> —
+                {{ 'stream requests are suspended until the connection is re-authorised.' | t('social-stream') }}
+                {% if instagram.connection.needsReauthAt %}
+                    <span class="light">{{ 'Rejected since {date}' | t('social-stream', { date: instagram.connection.needsReauthAt | date('j M Y, g:ia') }) }}</span>
+                {% endif %}
+            </p>
+        </div>
+    {% elseif instagram.isExpired %}
+        <div class="pane" style="background: var(--ui-danger-bg-color, #fdd); padding: 12px 16px; margin-bottom: 24px; border-radius: 4px;">
+            <p style="margin: 0; color: var(--ui-danger-text-color, #c00);">
+                <strong>{{ 'Token has expired' | t('social-stream') }}</strong> —
+                {{ 'please re-authorise to restore the connection.' | t('social-stream') }}
+            </p>
+        </div>
+    {% elseif instagram.isExpiringSoon %}
+        <div class="pane" style="background: var(--ui-warning-bg-color, #fff3cd); padding: 12px 16px; margin-bottom: 24px; border-radius: 4px;">
+            <p style="margin: 0; color: var(--ui-warning-text-color, #856404);">
+                <strong>{{ 'Token expires {date}' | t('social-stream', { date: instagram.connection.tokenExpiresAt }) }}</strong> —
+                {{ 'consider refreshing the token soon.' | t('social-stream') }}
+            </p>
+        </div>
+    {% endif %}
+{% endif %}
+
+{% if instagram.hasToken %}
+    <div class="pane" style="padding: 16px 20px; margin-bottom: 24px;">
+        <h2 style="margin-top: 0;">{{ 'Connection Status' | t('social-stream') }}</h2>
+
+        <table class="data fullwidth" style="margin-bottom: 16px;">
+            <tbody>
+                <tr>
+                    <th style="width: 200px;">{{ 'Status' | t('social-stream') }}</th>
+                    <td>
+                        <span class="status {{ (instagram.isExpired or instagram.needsReauth) ? 'off' : (instagram.isExpiringSoon ? 'pending' : 'active') }}"></span>
+                        {% if instagram.needsReauth %}
+                            {{ 'Rejected — re-authorisation required' | t('social-stream') }}
+                        {% elseif instagram.isExpired %}
+                            {{ 'Expired' | t('social-stream') }}
+                        {% elseif instagram.isExpiringSoon %}
+                            {{ 'Expiring soon' | t('social-stream') }}
+                        {% else %}
+                            {{ 'Connected' | t('social-stream') }}
+                        {% endif %}
+                    </td>
+                </tr>
+                {% if instagram.profile %}
+                    <tr>
+                        <th>{{ 'Account' | t('social-stream') }}</th>
+                        <td>
+                            {{ instagram.profile.username }}
+                            {% if instagram.profile.account_type %}
+                                <span class="light"> · {{ instagram.profile.account_type }}</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                {% endif %}
+                <tr>
+                    <th>{{ 'Access Token' | t('social-stream') }}</th>
+                    <td><code>{{ instagram.maskedToken }}</code></td>
+                </tr>
+                {% if instagram.connection.tokenExpiresAt %}
+                    <tr>
+                        <th>{{ 'Token Expiry' | t('social-stream') }}</th>
+                        <td>{{ instagram.connection.tokenExpiresAt | date('j M Y, g:ia') }}</td>
+                    </tr>
+                {% endif %}
+                {% if instagram.connection.lastFetchAt %}
+                    <tr>
+                        <th>{{ 'Last Successful Fetch' | t('social-stream') }}</th>
+                        <td>{{ instagram.connection.lastFetchAt | date('j M Y, g:ia') }}</td>
+                    </tr>
+                {% endif %}
+                {% if instagram.connection.lastError %}
+                    <tr>
+                        <th>{{ 'Last Error' | t('social-stream') }}</th>
+                        <td>
+                            <span style="color: var(--ui-danger-text-color, #c00);">{{ instagram.connection.lastError }}</span>
+                            {% if instagram.connection.lastErrorAt %}
+                                <span class="light"> · {{ instagram.connection.lastErrorAt | date('j M Y, g:ia') }}</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                {% endif %}
+                <tr>
+                    <th>{{ 'Rate Limit' | t('social-stream') }}</th>
+                    <td>
+                        {% if instagram.isRateLimited %}
+                            <span class="status pending"></span> {{ 'Cooldown active' | t('social-stream') }}
+                        {% else %}
+                            <span class="status active"></span> {{ 'No restrictions' | t('social-stream') }}
+                        {% endif %}
+                    </td>
+                </tr>
+                <tr>
+                    <th>{{ 'API Version' | t('social-stream') }}</th>
+                    <td><code>{{ instagram.apiVersion }}</code></td>
+                </tr>
+            </tbody>
+        </table>
+
+        {% include 'social-stream/settings/_provider-actions' %}
+    </div>
+{% endif %}
+
+{{ forms.autosuggestField({
+    label: 'Instagram App ID' | t('social-stream'),
+    instructions: 'From the Meta Developer portal. Supports environment variables.' | t('social-stream'),
+    id: 'appId',
+    name: 'appId',
+    value: instagram.appId,
+    suggestions: craft.cp.getEnvSuggestions(),
+    suggestEnvVars: true,
+}) }}
+
+{{ forms.autosuggestField({
+    label: 'Instagram App Secret' | t('social-stream'),
+    instructions: 'From the Meta Developer portal. Supports environment variables.' | t('social-stream'),
+    id: 'appSecret',
+    name: 'appSecret',
+    value: instagram.appSecretIsEnvVar ? instagram.appSecret : '',
+    placeholder: (not instagram.appSecretIsEnvVar and instagram.hasAppSecret) ? '••••••••' : '',
+    suggestions: craft.cp.getEnvSuggestions(),
+    suggestEnvVars: true,
+}) }}
+
+{% set authInput %}
+    {% if instagram.hasToken %}
+        <div class="pane" style="padding: 12px 16px; margin-bottom: 14px;">
+            <p style="margin: 0;">
+                <span class="status {{ (instagram.isExpired or instagram.needsReauth) ? 'off' : (instagram.isExpiringSoon ? 'pending' : 'active') }}"></span>
+                {{ 'Connected' | t('social-stream') }} — <code>{{ instagram.maskedToken }}</code>
+                {% if instagram.connection.tokenExpiresAt %}
+                    <span class="light"> · {{ 'Token expires {date}' | t('social-stream', { date: instagram.connection.tokenExpiresAt | date('j M Y') }) }}</span>
+                {% endif %}
+            </p>
+        </div>
+    {% endif %}
+    <a id="auth-btn" class="btn submit {% if not instagram.appId %}disabled{% endif %}" href="#">
+        {{ instagram.hasToken ? 'Re-authorise' | t('social-stream') : 'Authorise' | t('social-stream') }}
+    </a>
+    <p class="light" style="margin: 8px 0 0;">
+        {{ 'Add this redirect URI to the app:' | t('social-stream') }}
+        <code style="user-select: all;">{{ redirectUri }}</code>
+    </p>
+{% endset %}
+
+{{ forms.field({
+    label: 'Authorisation' | t('social-stream'),
+    id: 'auth-section',
+}, authInput) }}

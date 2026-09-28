@@ -5,6 +5,7 @@ namespace enovate\socialstream\services;
 use Craft;
 use craft\base\Component;
 use craft\helpers\Json;
+use enovate\socialstream\base\Provider;
 use enovate\socialstream\models\Post;
 use enovate\socialstream\records\SettingsRecord;
 use enovate\socialstream\SocialStream;
@@ -32,6 +33,11 @@ class CacheService extends Component
      * How long (in seconds) to wait for a mutex lock before giving up.
      */
     private const MUTEX_TIMEOUT = 5;
+
+    /**
+     * How long to remember the connected account's name for the CP (30 days).
+     */
+    private const REMEMBERED_ACCOUNT_TTL = 2592000;
 
     // -------------------------------------------------------------------------
     // Stream cache
@@ -133,6 +139,70 @@ class CacheService extends Component
         ];
 
         Craft::$app->cache->set($key, $entry, $ttl + $staleTtl, $this->_siteCacheDependency($siteId, $provider));
+        $this->rememberAccount($siteId, $provider, $response['data'] ?? null);
+    }
+
+    /**
+     * Remember which account a profile response described, well beyond the profile
+     * cache's own TTL.
+     *
+     * The CP names the connected account, and the name only ever arrives in a profile
+     * response. Tying that to the stream TTL would blank it out an hour after the last
+     * profile call on a connection that is working perfectly.
+     *
+     * Called from {@see \enovate\socialstream\base\Provider::fetchProfile()} as well
+     * as from here, so a caller that goes straight to the provider and never caches the
+     * response still leaves the name behind.
+     */
+    public function rememberAccount(int $siteId, string $provider, mixed $profile): void
+    {
+        $label = self::accountLabel(is_array($profile) ? $profile : null);
+
+        if ($label === null) {
+            return;
+        }
+
+        Craft::$app->cache->set(
+            $this->accountKey($siteId, $provider),
+            $label,
+            self::REMEMBERED_ACCOUNT_TTL,
+            $this->_siteCacheDependency($siteId, $provider),
+        );
+    }
+
+    /**
+     * The account name last seen for this connection, if it is still remembered.
+     */
+    public function rememberedAccount(int $siteId, string $provider): ?string
+    {
+        $label = Craft::$app->cache->get($this->accountKey($siteId, $provider));
+
+        return is_string($label) && $label !== '' ? $label : null;
+    }
+
+    /**
+     * Pull a display name out of a profile response.
+     *
+     * Providers disagree on the key — Instagram says `username`, YouTube says `title`
+     * — and a provider from another plugin may use neither, in which case there is
+     * simply no name to show.
+     */
+    public static function accountLabel(?array $profile): ?string
+    {
+        foreach (['username', 'title', 'name'] as $key) {
+            $value = $profile[$key] ?? null;
+
+            if (is_string($value) && $value !== '') {
+                return $value;
+            }
+        }
+
+        return null;
+    }
+
+    private function accountKey(int $siteId, string $provider): string
+    {
+        return 'social-stream:account:' . $provider . ':' . $siteId;
     }
 
     // -------------------------------------------------------------------------
@@ -193,6 +263,10 @@ class CacheService extends Component
      * so changing those in the CP naturally invalidates all existing entries without
      * needing an explicit cache clear.
      *
+     * An option the provider ignores is normalised away rather than keyed on — both
+     * in the segment and in the settings hash. Keying on it would split one stream
+     * across two identical entries, doubling the API calls that fill them.
+     *
      * Format: social-stream:{siteId}:{provider}:{limit}:{mediaType}:{excludeNonFeed}:{page}:{settingsHash}
      */
     public function streamKey(array $options): string
@@ -201,9 +275,13 @@ class CacheService extends Component
         $provider = $options['provider'] ?? '';
         $limit = $options['limit'] ?? 25;
         $mediaType = strtoupper($options['mediaType'] ?? 'ALL');
-        $excludeNonFeed = !empty($options['excludeNonFeed']) ? '1' : '0';
+        $usesExcludeNonFeed = $this->_providerUsesExcludeNonFeed((string) $provider);
+        $excludeNonFeed = ($usesExcludeNonFeed && !empty($options['excludeNonFeed'])) ? '1' : '0';
         $after = $options['after'] ?? '0';
-        $settingsHash = $this->_settingsHash(is_int($siteId) ? $siteId : (int) $siteId);
+        $settingsHash = $this->_settingsHash(
+            is_int($siteId) ? $siteId : (int) $siteId,
+            $usesExcludeNonFeed,
+        );
 
         return implode(':', [
             'social-stream',
@@ -251,8 +329,13 @@ class CacheService extends Component
     /**
      * Short hash of the settings that affect stream shape, used in cache keys so
      * edits to defaultLimit / excludeNonFeed in the CP invalidate existing entries.
+     *
+     * @param bool $includeExcludeNonFeed Whether the requesting provider acts on the
+     *                                    setting. When it doesn't, folding it in
+     *                                    would make an unrelated CP edit invalidate
+     *                                    that provider's cache for no reason.
      */
-    private function _settingsHash(int $siteId): string
+    private function _settingsHash(int $siteId, bool $includeExcludeNonFeed = true): string
     {
         $record = $siteId > 0 ? SettingsRecord::findOne(['siteId' => $siteId]) : null;
         $pluginSettings = SocialStream::$plugin->getSettings();
@@ -261,12 +344,33 @@ class CacheService extends Component
             'defaultLimit' => $record->defaultLimit
                 ?? $pluginSettings->defaultLimit
                 ?? 25,
-            'excludeNonFeed' => $record !== null
-                ? (bool) $record->excludeNonFeed
-                : (bool) ($pluginSettings->excludeNonFeed ?? false),
         ];
 
+        if ($includeExcludeNonFeed) {
+            $values['excludeNonFeed'] = $record !== null
+                ? (bool) $record->excludeNonFeed
+                : (bool) ($pluginSettings->excludeNonFeed ?? false);
+        }
+
         return substr(md5(Json::encode($values)), 0, 8);
+    }
+
+    /**
+     * Whether the provider behind this request acts on `excludeNonFeed`.
+     *
+     * An unregistered or unknown handle is assumed to use it: that is the
+     * pre-existing key shape, and guessing otherwise would silently change the keys
+     * of a third-party provider.
+     */
+    private function _providerUsesExcludeNonFeed(string $provider): bool
+    {
+        if ($provider === '') {
+            return true;
+        }
+
+        $instance = SocialStream::$plugin->providers->getProviderByHandle($provider);
+
+        return !($instance instanceof Provider) || $instance::usesExcludeNonFeed();
     }
 
     private function _cacheDependency(): \yii\caching\TagDependency

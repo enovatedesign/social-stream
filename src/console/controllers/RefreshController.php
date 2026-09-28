@@ -18,7 +18,9 @@ use yii\console\ExitCode;
  * Each invocation:
  *   1. Pre-warms the stream cache by queueing a RefreshStreamJob per connection.
  *   2. Checks each connection's token expiry and queues a RefreshTokenJob when
- *      a token is within TokenService::REFRESH_THRESHOLD_DAYS of expiry.
+ *      a token is within TokenService::REFRESH_THRESHOLD_DAYS of expiry. Connections
+ *      that renew their access token inline from a refresh token (YouTube) are
+ *      skipped — step 1 already exercises that path every run.
  *
  * Safe to run on every web host — both jobs hold a DB-backed lock across the queue-table
  * check and the push, so simultaneous hosts produce one job, not one each.
@@ -132,6 +134,15 @@ class RefreshController extends Controller
         // The provider has already rejected this credential; refreshing it can only
         // fail the same way. Re-authorisation is the only route back.
         if ($connection->needsReauthAt !== null) {
+            return false;
+        }
+
+        // A connection holding a refresh token renews its access token inline, on
+        // demand. YouTube's lasts an hour, so the expiry threshold below would queue
+        // a job on every single run — and it would learn nothing: the stream
+        // pre-warm queued above goes through the same inline refresh, so a dead
+        // refresh token is already surfaced once per run without the extra job.
+        if ($connection->refreshToken) {
             return false;
         }
 

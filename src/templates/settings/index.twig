@@ -5,10 +5,10 @@
 {% set fullPageForm = true %}
 
 {% set tabs = {
-    connection: { label: 'Connection' | t('social-stream'), url: '#connection' },
+    providers: { label: 'Providers' | t('social-stream'), url: '#providers' },
     configuration: { label: 'Configuration' | t('social-stream'), url: '#configuration' },
 } %}
-{% if hasToken and not isExpired and not needsReauth %}
+{% if previewProviders | length %}
     {% set tabs = tabs | merge({
         preview: { label: 'Stream Preview' | t('social-stream'), url: '#preview' },
     }) %}
@@ -39,158 +39,11 @@
     {{ actionInput('social-stream/settings/save') }}
     {{ hiddenInput('siteId', site.id) }}
 
-    {# ── Token status banner ── #}
-    {% if hasToken %}
-        {% if needsReauth %}
-            <div class="pane" style="background: var(--ui-danger-bg-color, #fdd); padding: 12px 16px; margin-bottom: 24px; border-radius: 4px;">
-                <p style="margin: 0; color: var(--ui-danger-text-color, #c00);">
-                    <strong>{{ 'Instagram has rejected this token' | t('social-stream') }}</strong> —
-                    {{ 'stream requests are suspended until the connection is re-authorised.' | t('social-stream') }}
-                    {% if connection.needsReauthAt %}
-                        <span class="light">{{ 'Rejected since {date}' | t('social-stream', { date: connection.needsReauthAt | date('j M Y, g:ia') }) }}</span>
-                    {% endif %}
-                </p>
-            </div>
-        {% elseif isExpired %}
-            <div class="pane" style="background: var(--ui-danger-bg-color, #fdd); padding: 12px 16px; margin-bottom: 24px; border-radius: 4px;">
-                <p style="margin: 0; color: var(--ui-danger-text-color, #c00);">
-                    <strong>{{ 'Token has expired' | t('social-stream') }}</strong> — please re-authorise to restore the connection.
-                </p>
-            </div>
-        {% elseif isExpiringSoon %}
-            <div class="pane" style="background: var(--ui-warning-bg-color, #fff3cd); padding: 12px 16px; margin-bottom: 24px; border-radius: 4px;">
-                <p style="margin: 0; color: var(--ui-warning-text-color, #856404);">
-                    <strong>{{ 'Token expires {date}' | t('social-stream', { date: connection.tokenExpiresAt }) }}</strong> — consider refreshing the token soon.
-                </p>
-            </div>
-        {% endif %}
-    {% endif %}
-
     {# ══════════════════════════════════════════════════════════════════════
-       Connection tab
+       Providers tab
        ══════════════════════════════════════════════════════════════════════ #}
-    <div id="connection">
-
-        {# ── Connection health panel ── #}
-        {% if hasToken %}
-            <div class="pane" style="padding: 16px 20px; margin-bottom: 24px;">
-                <h2 style="margin-top: 0;">{{ 'Connection Status' | t('social-stream') }}</h2>
-
-                <table class="data fullwidth" style="margin-bottom: 16px;">
-                    <tbody>
-                        <tr>
-                            <th style="width: 200px;">{{ 'Status' | t('social-stream') }}</th>
-                            <td>
-                                <span class="status {{ (isExpired or needsReauth) ? 'off' : (isExpiringSoon ? 'amber' : 'active') }}"></span>
-                                {% if needsReauth %}
-                                    {{ 'Rejected — re-authorisation required' | t('social-stream') }}
-                                {% elseif isExpired %}
-                                    {{ 'Expired' | t('social-stream') }}
-                                {% elseif isExpiringSoon %}
-                                    {{ 'Expiring soon' | t('social-stream') }}
-                                {% else %}
-                                    {{ 'Connected' | t('social-stream') }}
-                                {% endif %}
-                            </td>
-                        </tr>
-                        <tr>
-                            <th>{{ 'Access Token' | t('social-stream') }}</th>
-                            <td><code>{{ maskedToken }}</code></td>
-                        </tr>
-                        {% if connection.tokenExpiresAt %}
-                            <tr>
-                                <th>{{ 'Token Expiry' | t('social-stream') }}</th>
-                                <td>{{ connection.tokenExpiresAt | date('j M Y, g:ia') }}</td>
-                            </tr>
-                        {% endif %}
-                        {% if connection.lastFetchAt %}
-                            <tr>
-                                <th>{{ 'Last Successful Fetch' | t('social-stream') }}</th>
-                                <td>{{ connection.lastFetchAt | date('j M Y, g:ia') }}</td>
-                            </tr>
-                        {% endif %}
-                        {% if connection.lastError %}
-                            <tr>
-                                <th>{{ 'Last Error' | t('social-stream') }}</th>
-                                <td>
-                                    <span style="color: var(--ui-danger-text-color, #c00);">{{ connection.lastError }}</span>
-                                    {% if connection.lastErrorAt %}
-                                        <span class="light"> · {{ connection.lastErrorAt | date('j M Y, g:ia') }}</span>
-                                    {% endif %}
-                                </td>
-                            </tr>
-                        {% endif %}
-                        <tr>
-                            <th>{{ 'Rate Limit' | t('social-stream') }}</th>
-                            <td>
-                                {% if isRateLimited %}
-                                    <span class="status amber"></span> {{ 'Cooldown active' | t('social-stream') }}
-                                {% else %}
-                                    <span class="status active"></span> {{ 'No restrictions' | t('social-stream') }}
-                                {% endif %}
-                            </td>
-                        </tr>
-                        <tr>
-                            <th>{{ 'API Version' | t('social-stream') }}</th>
-                            <td><code>{{ apiVersion }}</code></td>
-                        </tr>
-                    </tbody>
-                </table>
-
-                <div id="health-actions">
-                    <button type="button" id="test-connection-btn" class="btn">{{ 'Test Connection' | t('social-stream') }}</button>
-                    <button type="button" id="refresh-stream-btn" class="btn">{{ 'Refresh Stream Now' | t('social-stream') }}</button>
-                    <span id="health-action-spinner" class="spinner hidden"></span>
-                    <div id="health-action-result" style="margin-top: 10px;"></div>
-                </div>
-            </div>
-        {% endif %}
-
-        {{ forms.autosuggestField({
-            label: 'Instagram App ID' | t('social-stream'),
-            instructions: 'From the Meta Developer portal. Supports environment variables.' | t('social-stream'),
-            id: 'appId',
-            name: 'appId',
-            value: decryptedAppId,
-            required: true,
-            suggestions: craft.cp.getEnvSuggestions(),
-            suggestEnvVars: true,
-        }) }}
-
-        {{ forms.autosuggestField({
-            label: 'Instagram App Secret' | t('social-stream'),
-            instructions: 'From the Meta Developer portal. Supports environment variables.' | t('social-stream'),
-            id: 'appSecret',
-            name: 'appSecret',
-            value: appSecretIsEnvVar ? decryptedAppSecret : '',
-            placeholder: (not appSecretIsEnvVar and connection.appSecret) ? '••••••••' : '',
-            required: true,
-            suggestions: craft.cp.getEnvSuggestions(),
-            suggestEnvVars: true,
-        }) }}
-
-        {% set authInput %}
-            {% if hasToken %}
-                <div class="pane" style="padding: 12px 16px; margin-bottom: 14px;">
-                    <p style="margin: 0;">
-                        <span class="status {{ (isExpired or needsReauth) ? 'off' : (isExpiringSoon ? 'amber' : 'active') }}"></span>
-                        {{ 'Connected' | t('social-stream') }} — <code>{{ maskedToken }}</code>
-                        {% if connection.tokenExpiresAt %}
-                            <span class="light"> · {{ 'Token expires {date}' | t('social-stream', { date: connection.tokenExpiresAt | date('j M Y') }) }}</span>
-                        {% endif %}
-                    </p>
-                </div>
-            {% endif %}
-            <a id="auth-btn" class="btn submit {% if not decryptedAppId %}disabled{% endif %}" href="#">
-                {{ hasToken ? 'Re-authorise' : 'Authorise' | t('social-stream') }}
-            </a>
-        {% endset %}
-
-        {{ forms.field({
-            label: 'Authorisation' | t('social-stream'),
-            id: 'auth-section',
-        }, authInput) }}
-
+    <div id="providers">
+        {% include 'social-stream/settings/_providers' %}
     </div>
 
     {# ══════════════════════════════════════════════════════════════════════
@@ -211,7 +64,7 @@
 
         {{ forms.lightswitchField({
             label: 'Exclude Non-Feed Posts' | t('social-stream'),
-            instructions: 'Exclude posts not shared to the main feed (e.g. Trial reels).' | t('social-stream'),
+            instructions: 'Exclude posts not shared to the main feed (e.g. Trial reels). Instagram only — providers with no equivalent ignore it.' | t('social-stream'),
             id: 'excludeNonFeed',
             name: 'excludeNonFeed',
             on: settingsRecord.excludeNonFeed ?? false,
@@ -232,16 +85,30 @@
     {# ══════════════════════════════════════════════════════════════════════
        Stream Preview tab
        ══════════════════════════════════════════════════════════════════════ #}
-    {% if hasToken and not isExpired and not needsReauth %}
-    <div id="preview" class="hidden">
-        <div style="margin-bottom: 16px;">
-            <button type="button" id="load-preview-btn" class="btn submit">{{ 'Load Stream Preview' | t('social-stream') }}</button>
-            <span id="preview-spinner" class="spinner hidden"></span>
+    {% if previewProviders | length %}
+        <div id="preview" class="hidden">
+            <div style="margin-bottom: 16px;">
+                {% if previewProviders | length > 1 %}
+                    <span style="display: inline-block; margin-right: 8px;">
+                        {{ forms.select({
+                            id: 'preview-provider',
+                            name: 'previewProvider',
+                            options: previewProviders | map(p => {
+                                label: p.account ? p.name ~ ' — ' ~ p.account : p.name,
+                                value: p.handle,
+                            }),
+                        }) }}
+                    </span>
+                {% else %}
+                    {{ hiddenInput('previewProvider', previewProviders[0].handle, { id: 'preview-provider' }) }}
+                {% endif %}
+                <button type="button" id="load-preview-btn" class="btn submit">{{ 'Load Stream Preview' | t('social-stream') }}</button>
+                <span id="preview-spinner" class="spinner hidden"></span>
+            </div>
+            <div id="preview-meta" style="margin-bottom: 16px;"></div>
+            <div id="preview-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px;"></div>
+            <div id="preview-empty"></div>
         </div>
-        <div id="preview-meta" style="margin-bottom: 16px;"></div>
-        <div id="preview-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px;"></div>
-        <div id="preview-empty"></div>
-    </div>
     {% endif %}
 
     {# ══════════════════════════════════════════════════════════════════════
@@ -283,104 +150,20 @@
 
 {% js %}
     (function() {
-        var appIdField = document.getElementById('appId');
-        var authBtn = document.getElementById('auth-btn');
+        function pane(background, color, html) {
+            return '<div class="pane" style="padding: 10px 14px; background: ' + background + ';">'
+                + '<p style="margin: 0; color: ' + color + ';">' + html + '</p></div>';
+        }
 
-        function updateAuthBtn() {
-            if (appIdField && appIdField.value.trim().length > 0) {
-                authBtn.classList.remove('disabled');
-            } else {
-                authBtn.classList.add('disabled');
+        function failure(message) {
+            return pane('var(--ui-danger-bg-color, #fdd)', 'var(--ui-danger-text-color, #c00)', Craft.escapeHtml(message));
+        }
+
+        function errorMessage(e) {
+            if (e && e.response && e.response.data) {
+                return e.response.data.error || e.response.data.message || 'Request failed.';
             }
-        }
-
-        if (appIdField) {
-            appIdField.addEventListener('input', updateAuthBtn);
-            appIdField.addEventListener('blur', updateAuthBtn);
-        }
-
-        if (authBtn) {
-            authBtn.addEventListener('click', function(e) {
-                e.preventDefault();
-                if (authBtn.classList.contains('disabled')) return;
-                window.location.href = Craft.getActionUrl('social-stream/auth/handle-auth', {
-                    siteId: '{{ site.id }}'
-                });
-            });
-        }
-
-        // Health panel buttons
-        var testBtn = document.getElementById('test-connection-btn');
-        var refreshBtn = document.getElementById('refresh-stream-btn');
-        var spinner = document.getElementById('health-action-spinner');
-        var resultDiv = document.getElementById('health-action-result');
-
-        function showSpinner() {
-            if (spinner) spinner.classList.remove('hidden');
-            if (resultDiv) resultDiv.innerHTML = '';
-        }
-        function hideSpinner() {
-            if (spinner) spinner.classList.add('hidden');
-        }
-
-        if (testBtn) {
-            testBtn.addEventListener('click', function() {
-                showSpinner();
-                Craft.sendActionRequest('POST', 'social-stream/settings/test-connection', {
-                    data: { siteId: '{{ site.id }}' }
-                }).then(function(response) {
-                    hideSpinner();
-                    var d = response.data;
-                    if (d.success) {
-                        var info = d.data;
-                        resultDiv.innerHTML = '<div class="pane" style="padding: 10px 14px; background: var(--ui-success-bg-color, #d4edda);">'
-                            + '<p style="margin: 0; color: var(--ui-success-text-color, #155724);">'
-                            + '<span class="status active"></span> '
-                            + '<strong>' + Craft.escapeHtml(info.username || '') + '</strong>'
-                            + (info.account_type ? ' (' + Craft.escapeHtml(info.account_type) + ')' : '')
-                            + '</p></div>';
-                    } else {
-                        resultDiv.innerHTML = '<div class="pane" style="padding: 10px 14px; background: var(--ui-danger-bg-color, #fdd);">'
-                            + '<p style="margin: 0; color: var(--ui-danger-text-color, #c00);">'
-                            + Craft.escapeHtml(d.error)
-                            + '</p></div>';
-                    }
-                }).catch(function(e) {
-                    hideSpinner();
-                    var msg = 'Request failed.';
-                    if (e && e.response && e.response.data) {
-                        msg = e.response.data.error || e.response.data.message || msg;
-                    }
-                    resultDiv.innerHTML = '<div class="pane" style="padding: 10px 14px; background: var(--ui-danger-bg-color, #fdd);">'
-                        + '<p style="margin: 0; color: var(--ui-danger-text-color, #c00);">'
-                        + Craft.escapeHtml(msg) + '</p></div>';
-                });
-            });
-        }
-
-        if (refreshBtn) {
-            refreshBtn.addEventListener('click', function() {
-                showSpinner();
-                Craft.sendActionRequest('POST', 'social-stream/settings/refresh-stream', {
-                    data: { siteId: '{{ site.id }}' }
-                }).then(function(response) {
-                    hideSpinner();
-                    var d = response.data;
-                    resultDiv.innerHTML = '<div class="pane" style="padding: 10px 14px; background: var(--ui-success-bg-color, #d4edda);">'
-                        + '<p style="margin: 0; color: var(--ui-success-text-color, #155724);">'
-                        + Craft.escapeHtml(d.message)
-                        + '</p></div>';
-                }).catch(function(e) {
-                    hideSpinner();
-                    var msg = 'Request failed.';
-                    if (e && e.response && e.response.data) {
-                        msg = e.response.data.error || e.response.data.message || msg;
-                    }
-                    resultDiv.innerHTML = '<div class="pane" style="padding: 10px 14px; background: var(--ui-danger-bg-color, #fdd);">'
-                        + '<p style="margin: 0; color: var(--ui-danger-text-color, #c00);">'
-                        + Craft.escapeHtml(msg) + '</p></div>';
-                });
-            });
+            return 'Request failed.';
         }
 
         // API token generation
@@ -408,18 +191,15 @@
                             + '</div>';
                         genTokenBtn.textContent = '{{ 'Regenerate Token' | t('social-stream') | e('js') }}';
                     } else {
-                        tokenResultDiv.innerHTML = '<div class="pane" style="padding: 10px 14px; background: var(--ui-danger-bg-color, #fdd);">'
-                            + '<p style="margin: 0; color: var(--ui-danger-text-color, #c00);">'
-                            + Craft.escapeHtml(d.error)
-                            + '</p></div>';
+                        tokenResultDiv.innerHTML = failure(d.error);
                     }
                 }).catch(function() {
                     if (tokenSpinner) tokenSpinner.classList.add('hidden');
-                    tokenResultDiv.innerHTML = '<div class="pane" style="padding: 10px 14px; background: var(--ui-danger-bg-color, #fdd);">'
-                        + '<p style="margin: 0; color: var(--ui-danger-text-color, #c00);">Request failed.</p></div>';
+                    tokenResultDiv.innerHTML = failure('Request failed.');
                 });
             });
         }
+
         // Stream preview
         var previewBtn = document.getElementById('load-preview-btn');
         var previewSpinner = document.getElementById('preview-spinner');
@@ -434,16 +214,17 @@
                 previewMeta.innerHTML = '';
                 previewEmpty.innerHTML = '';
 
+                var providerField = document.getElementById('preview-provider');
+                var previewProvider = providerField ? providerField.value : 'instagram';
+
                 Craft.sendActionRequest('POST', 'social-stream/settings/preview-stream', {
-                    data: { siteId: '{{ site.id }}' }
+                    data: { siteId: '{{ site.id }}', provider: previewProvider }
                 }).then(function(response) {
                     if (previewSpinner) previewSpinner.classList.add('hidden');
                     var d = response.data;
 
                     if (!d.success) {
-                        previewEmpty.innerHTML = '<div class="pane" style="padding: 10px 14px; background: var(--ui-danger-bg-color, #fdd);">'
-                            + '<p style="margin: 0; color: var(--ui-danger-text-color, #c00);">'
-                            + Craft.escapeHtml(d.error) + '</p></div>';
+                        previewEmpty.innerHTML = failure(d.error);
                         return;
                     }
 
@@ -486,6 +267,11 @@
                         var badge = '';
                         if (type === 'VIDEO') badge = '<span style="background: #5c6ac4; color: #fff; font-size: 11px; padding: 2px 6px; border-radius: 3px;">Video</span> ';
                         else if (type === 'CAROUSEL_ALBUM') badge = '<span style="background: #50b83c; color: #fff; font-size: 11px; padding: 2px 6px; border-radius: 3px;">Carousel</span> ';
+                        else if (type === 'SHORT') badge = '<span style="background: #e63946; color: #fff; font-size: 11px; padding: 2px 6px; border-radius: 3px;">Short</span> ';
+
+                        if (post.meta && post.meta.durationFormatted && post.provider === 'youtube') {
+                            badge += '<span class="light">' + Craft.escapeHtml(post.meta.durationFormatted) + '</span> ';
+                        }
 
                         var caption = post.caption || '';
                         if (caption.length > 80) caption = caption.substring(0, 80) + '…';
@@ -496,7 +282,8 @@
                         }
 
                         var stats = '';
-                        if (post.likeCount !== null && post.likeCount !== undefined) stats += post.likeCount + ' likes';
+                        if (post.meta && post.meta.viewCount !== null && post.meta.viewCount !== undefined) stats += post.meta.viewCount + ' views';
+                        if (post.likeCount !== null && post.likeCount !== undefined) stats += (stats ? ' · ' : '') + post.likeCount + ' likes';
                         if (post.commentsCount !== null && post.commentsCount !== undefined) stats += (stats ? ' · ' : '') + post.commentsCount + ' comments';
 
                         card.innerHTML = img
@@ -505,22 +292,40 @@
                             + '<span class="light">' + Craft.escapeHtml(date) + '</span></p>'
                             + (caption ? '<p style="margin: 0 0 4px; font-size: 12px; line-height: 1.4;">' + Craft.escapeHtml(caption) + '</p>' : '')
                             + (stats ? '<p style="margin: 0; font-size: 11px;" class="light">' + Craft.escapeHtml(stats) + '</p>' : '')
-                            + (post.permalink ? '<p style="margin: 4px 0 0;"><a href="' + Craft.escapeHtml(post.permalink) + '" target="_blank" rel="noopener" style="font-size: 11px;">View on Instagram →</a></p>' : '')
+                            + (post.permalink ? '<p style="margin: 4px 0 0;"><a href="' + Craft.escapeHtml(post.permalink) + '" target="_blank" rel="noopener" style="font-size: 11px;">'
+                                + (post.provider === 'youtube' ? 'View on YouTube' : 'View on Instagram') + ' →</a></p>' : '')
                             + '</div>';
 
                         previewGrid.appendChild(card);
                     });
                 }).catch(function(e) {
                     if (previewSpinner) previewSpinner.classList.add('hidden');
-                    var msg = 'Request failed.';
-                    if (e && e.response && e.response.data) {
-                        msg = e.response.data.error || e.response.data.message || msg;
-                    }
-                    previewEmpty.innerHTML = '<div class="pane" style="padding: 10px 14px; background: var(--ui-danger-bg-color, #fdd);">'
-                        + '<p style="margin: 0; color: var(--ui-danger-text-color, #c00);">'
-                        + Craft.escapeHtml(msg) + '</p></div>';
+                    previewEmpty.innerHTML = failure(errorMessage(e));
                 });
             });
+        }
+
+        // Arriving from a provider page's Preview Stream button: pick that provider and
+        // load it, so the button lands on a populated tab rather than an empty one.
+        // Runs last on purpose — the click below needs the handler above to exist.
+        if (previewBtn) {
+            var requestedProvider = new URLSearchParams(window.location.search).get('preview');
+
+            if (requestedProvider) {
+                var field = document.getElementById('preview-provider');
+
+                if (field) {
+                    var available = field.tagName === 'SELECT'
+                        ? Array.prototype.map.call(field.options, function(o) { return o.value; })
+                        : [field.value];
+
+                    if (available.indexOf(requestedProvider) !== -1) {
+                        field.value = requestedProvider;
+                    }
+                }
+
+                previewBtn.click();
+            }
         }
     })();
 {% endjs %}

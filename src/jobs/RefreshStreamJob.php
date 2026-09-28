@@ -3,7 +3,6 @@
 namespace enovate\socialstream\jobs;
 
 use Craft;
-use craft\db\Query;
 use craft\queue\BaseJob;
 use enovate\socialstream\events\StreamRefreshedEvent;
 use enovate\socialstream\models\Post;
@@ -142,46 +141,6 @@ class RefreshStreamJob extends BaseJob
 
             return true;
         });
-    }
-
-    /**
-     * Check the Craft queue table for a pending / running / recently-failed job
-     * with the same dedup tag. Reads go through the primary DB so replica lag
-     * can't mislead a host into queueing a duplicate.
-     */
-    private static function queueIsClear(string $tag): bool
-    {
-        $like = ['like', 'description', $tag];
-
-        Craft::$app->getDb()->usePrimary(function () use ($like) {
-            Craft::$app->getDb()->createCommand()
-                ->delete('{{%queue}}', [
-                    'and',
-                    $like,
-                    ['fail' => true],
-                    ['<', 'timePushed', time() - 86400],
-                ])
-                ->execute();
-        });
-
-        $pending = Craft::$app->getDb()->usePrimary(fn() => (new Query())
-            ->from('{{%queue}}')
-            ->where($like)
-            ->andWhere(['fail' => false])
-            ->exists());
-
-        if ($pending) {
-            return false;
-        }
-
-        $recentlyFailed = Craft::$app->getDb()->usePrimary(fn() => (new Query())
-            ->from('{{%queue}}')
-            ->where($like)
-            ->andWhere(['fail' => true])
-            ->andWhere(['>=', 'timePushed', time() - 7200])
-            ->exists());
-
-        return !$recentlyFailed;
     }
 
     private static function dedupTag(int $siteId, string $provider): string

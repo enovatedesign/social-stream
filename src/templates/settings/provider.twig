@@ -1,0 +1,175 @@
+{% extends '_layouts/cp' %}
+{% import '_includes/forms' as forms %}
+
+{% set title = providerName %}
+{% set fullPageForm = true %}
+
+{% set crumbs = [
+    { label: 'Social Stream' | t('social-stream'), url: cpUrl('social-stream/settings/' ~ site.handle) },
+] %}
+
+{% block toolbar %}
+    {% if allSites | length > 1 %}
+        <div id="sites-btn" class="btn menubtn" data-icon="world">{{ site.name }}</div>
+        <div class="menu">
+            <ul class="padded">
+                {% for s in allSites %}
+                    <li>
+                        <a {% if s.id == site.id %}class="sel"{% else %}href="{{ cpUrl('social-stream/settings/' ~ s.handle ~ '/provider/' ~ providerHandle) }}"{% endif %}>
+                            {{ s.name }}
+                        </a>
+                    </li>
+                {% endfor %}
+            </ul>
+        </div>
+    {% endif %}
+{% endblock %}
+
+{% set content %}
+
+    {{ actionInput('social-stream/settings/save-provider') }}
+    {{ hiddenInput('siteId', site.id) }}
+    {{ hiddenInput('provider', providerHandle) }}
+
+    {% if providerHandle == 'instagram' %}
+        {% include 'social-stream/settings/_instagram' %}
+    {% elseif providerHandle == 'youtube' %}
+        {% include 'social-stream/settings/_youtube' %}
+    {% else %}
+        {% include 'social-stream/settings/_provider-generic' %}
+    {% endif %}
+
+{% endset %}
+
+{% js %}
+    (function() {
+        var provider = '{{ providerHandle | e('js') }}';
+        var siteId = '{{ site.id }}';
+
+        var appIdField = document.getElementById('appId');
+        var authBtn = document.getElementById('auth-btn');
+        var spinner = document.getElementById('health-action-spinner');
+        var resultDiv = document.getElementById('health-action-result');
+
+        function pane(background, color, html) {
+            return '<div class="pane" style="padding: 10px 14px; background: ' + background + ';">'
+                + '<p style="margin: 0; color: ' + color + ';">' + html + '</p></div>';
+        }
+
+        function success(html) {
+            return pane('var(--ui-success-bg-color, #d4edda)', 'var(--ui-success-text-color, #155724)', html);
+        }
+
+        function failure(message) {
+            return pane('var(--ui-danger-bg-color, #fdd)', 'var(--ui-danger-text-color, #c00)', Craft.escapeHtml(message));
+        }
+
+        // The status panel above is server-rendered, so an action that teaches the
+        // plugin something — the account's name, a new lease, a cleared connection —
+        // leaves it stale until the page is fetched again. Reloading after the result
+        // has been shown keeps the two honest with each other.
+        var credentialFields = ['appId', 'appSecret']
+            .map(function(id) { return document.getElementById(id); })
+            .filter(Boolean);
+        var initialCredentials = credentialFields.map(function(field) { return field.value; });
+
+        function credentialsEdited() {
+            return credentialFields.some(function(field, i) { return field.value !== initialCredentials[i]; });
+        }
+
+        // One request helper for every action on this page — they all post the same
+        // two params and render into the same result pane.
+        function action(name, onSuccess, reloadAfter) {
+            if (spinner) spinner.classList.remove('hidden');
+            if (resultDiv) resultDiv.innerHTML = '';
+
+            Craft.sendActionRequest('POST', 'social-stream/settings/' + name, {
+                data: { siteId: siteId, provider: provider }
+            }).then(function(response) {
+                if (spinner) spinner.classList.add('hidden');
+                var d = response.data;
+                if (resultDiv) resultDiv.innerHTML = d.success ? onSuccess(d) : failure(d.error);
+
+                // Never reload over something half-typed: the credential fields are
+                // part of this form, and a reload would throw the edit away.
+                if (d.success && reloadAfter && !credentialsEdited()) {
+                    window.setTimeout(function() { window.location.reload(); }, reloadAfter);
+                }
+            }).catch(function(e) {
+                if (spinner) spinner.classList.add('hidden');
+                var msg = 'Request failed.';
+                if (e && e.response && e.response.data) {
+                    msg = e.response.data.error || e.response.data.message || msg;
+                }
+                if (resultDiv) resultDiv.innerHTML = failure(msg);
+            });
+        }
+
+        // Authorising without an app ID saved can only fail, so the button waits for one.
+        function updateAuthBtn() {
+            if (!authBtn) return;
+            if (appIdField && appIdField.value.trim().length > 0) {
+                authBtn.classList.remove('disabled');
+            } else {
+                authBtn.classList.add('disabled');
+            }
+        }
+
+        if (appIdField) {
+            appIdField.addEventListener('input', updateAuthBtn);
+            appIdField.addEventListener('blur', updateAuthBtn);
+        }
+
+        if (authBtn) {
+            authBtn.addEventListener('click', function(e) {
+                e.preventDefault();
+                if (authBtn.classList.contains('disabled')) return;
+                window.location.href = Craft.getActionUrl('social-stream/auth/handle-auth', {
+                    siteId: siteId,
+                    provider: provider
+                });
+            });
+        }
+
+        var testBtn = document.getElementById('test-connection-btn');
+        if (testBtn) {
+            testBtn.addEventListener('click', function() {
+                action('test-connection', function(d) {
+                    return success('<span class="status active"></span> <strong>'
+                        + Craft.escapeHtml(d.label || '{{ 'Connected' | t('social-stream') | e('js') }}') + '</strong>'
+                        + (d.detail ? ' <span class="light">(' + Craft.escapeHtml(d.detail) + ')</span>' : ''));
+                }, 1500);
+            });
+        }
+
+        var refreshBtn = document.getElementById('refresh-stream-btn');
+        if (refreshBtn) {
+            refreshBtn.addEventListener('click', function() {
+                action('refresh-stream', function(d) {
+                    return success(Craft.escapeHtml(d.message));
+                });
+            });
+        }
+
+        var subscribeBtn = document.getElementById('websub-subscribe-btn');
+        if (subscribeBtn) {
+            subscribeBtn.addEventListener('click', function() {
+                action('subscribe-web-sub', function(d) {
+                    return success(Craft.escapeHtml(d.message));
+                }, 3000);
+            });
+        }
+
+        var disconnectBtn = document.getElementById('disconnect-btn');
+        if (disconnectBtn) {
+            disconnectBtn.addEventListener('click', function() {
+                if (!confirm('{{ 'This will forget the connected account and stop any push notifications. Continue?' | t('social-stream') | e('js') }}')) {
+                    return;
+                }
+                action('disconnect', function(d) {
+                    return success(Craft.escapeHtml(d.message));
+                }, 1500);
+            });
+        }
+    })();
+{% endjs %}

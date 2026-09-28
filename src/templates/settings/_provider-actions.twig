@@ -1,0 +1,13 @@
+{# The action bar shown on a connected provider's page. One copy, three includes. #}
+
+<div id="health-actions">
+    <button type="button" id="test-connection-btn" class="btn">{{ 'Test Connection' | t('social-stream') }}</button>
+    <button type="button" id="refresh-stream-btn" class="btn">{{ 'Refresh Stream Now' | t('social-stream') }}</button>
+    {# Carries the provider so the settings page knows which stream to load on arrival. #}
+    <a class="btn" href="{{ cpUrl('social-stream/settings/' ~ site.handle, { preview: providerHandle }) }}#preview">
+        {{ 'Preview Stream' | t('social-stream') }}
+    </a>
+    <button type="button" id="disconnect-btn" class="btn">{{ 'Disconnect' | t('social-stream') }}</button>
+    <span id="health-action-spinner" class="spinner hidden"></span>
+    <div id="health-action-result" style="margin-top: 10px;"></div>
+</div>

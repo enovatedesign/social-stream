@@ -1,0 +1,190 @@
+{# YouTube's credentials and connection state. Included from settings/provider.twig. #}
+{% import '_includes/forms' as forms %}
+
+{% if youtube.needsReauth %}
+    <div class="pane" style="background: var(--ui-danger-bg-color, #fdd); padding: 12px 16px; margin-bottom: 24px; border-radius: 4px;">
+        <p style="margin: 0; color: var(--ui-danger-text-color, #c00);">
+            <strong>{{ 'Google has rejected this connection' | t('social-stream') }}</strong> —
+            {{ 'reconnect the channel to resume requests.' | t('social-stream') }}
+            {% if youtube.connection.lastError %}
+                <span class="light">{{ youtube.connection.lastError }}</span>
+            {% endif %}
+        </p>
+    </div>
+{% endif %}
+
+{% if youtube.hasToken or youtube.hasRefreshToken %}
+    <div class="pane" style="padding: 16px 20px; margin-bottom: 24px;">
+        <h2 style="margin-top: 0;">{{ 'Connection Status' | t('social-stream') }}</h2>
+
+        <table class="data fullwidth" style="margin-bottom: 16px;">
+            <tbody>
+                <tr>
+                    <th style="width: 200px;">{{ 'Status' | t('social-stream') }}</th>
+                    <td>
+                        <span class="status {{ (youtube.needsReauth or not youtube.hasRefreshToken) ? 'off' : 'active' }}"></span>
+                        {% if youtube.needsReauth %}
+                            {{ 'Rejected — reconnect required' | t('social-stream') }}
+                        {% elseif not youtube.hasRefreshToken %}
+                            {{ 'No refresh token — reconnect required' | t('social-stream') }}
+                        {% else %}
+                            {{ 'Connected' | t('social-stream') }}
+                        {% endif %}
+                    </td>
+                </tr>
+                {% if youtube.profile %}
+                    <tr>
+                        <th>{{ 'Channel' | t('social-stream') }}</th>
+                        <td>
+                            {% if youtube.profile.thumbnailUrl %}
+                                <img src="{{ youtube.profile.thumbnailUrl }}" alt="" width="24" height="24" style="border-radius: 50%; vertical-align: middle; margin-right: 6px;">
+                            {% endif %}
+                            {{ youtube.profile.title }}
+                            {% if youtube.profile.customUrl %}
+                                <span class="light"> · {{ youtube.profile.customUrl }}</span>
+                            {% endif %}
+                            {% if youtube.profile.subscriberCount is not null and not youtube.profile.hiddenSubscriberCount %}
+                                <span class="light"> · {{ youtube.profile.subscriberCount | number_format }} {{ 'subscribers' | t('social-stream') }}</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                {% endif %}
+                {% if youtube.channelId %}
+                    <tr>
+                        <th>{{ 'Channel ID' | t('social-stream') }}</th>
+                        <td><code>{{ youtube.channelId }}</code></td>
+                    </tr>
+                {% endif %}
+                <tr>
+                    <th>{{ 'Access Token' | t('social-stream') }}</th>
+                    <td>
+                        <code>{{ youtube.maskedToken }}</code>
+                        {% if youtube.tokenExpiresAt %}
+                            <span class="light"> · {{ 'expires {date} — renewed automatically' | t('social-stream', { date: youtube.tokenExpiresAt | date('j M Y, g:ia') }) }}</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                <tr>
+                    <th>{{ 'Refresh Token' | t('social-stream') }}</th>
+                    <td>
+                        <span class="status {{ youtube.hasRefreshToken ? 'active' : 'off' }}"></span>
+                        {{ youtube.hasRefreshToken ? 'Stored' | t('social-stream') : 'Missing' | t('social-stream') }}
+                    </td>
+                </tr>
+                {% if youtube.connection.lastFetchAt %}
+                    <tr>
+                        <th>{{ 'Last Successful Fetch' | t('social-stream') }}</th>
+                        <td>{{ youtube.connection.lastFetchAt | date('j M Y, g:ia') }}</td>
+                    </tr>
+                {% endif %}
+                {% if youtube.connection.lastError %}
+                    <tr>
+                        <th>{{ 'Last Error' | t('social-stream') }}</th>
+                        <td>
+                            <span style="color: var(--ui-danger-text-color, #c00);">{{ youtube.connection.lastError }}</span>
+                            {% if youtube.connection.lastErrorAt %}
+                                <span class="light"> · {{ youtube.connection.lastErrorAt | date('j M Y, g:ia') }}</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                {% endif %}
+                <tr>
+                    <th>{{ 'Push Notifications' | t('social-stream') }}</th>
+                    <td>
+                        <span class="status {{ youtube.websubActive ? 'active' : 'pending' }}"></span>
+                        {% if youtube.websubActive %}
+                            {{ 'Active until {date}' | t('social-stream', { date: youtube.websubExpiresAt | date('j M Y, g:ia') }) }}
+                        {% elseif youtube.websubExpiresAt %}
+                            {{ 'Lease expired {date}' | t('social-stream', { date: youtube.websubExpiresAt | date('j M Y, g:ia') }) }}
+                        {% else %}
+                            {{ 'Not subscribed — new uploads appear when the cache expires' | t('social-stream') }}
+                        {% endif %}
+                        {% if youtube.webhookLastReceivedAt %}
+                            <span class="light"> · {{ 'last notification {date}' | t('social-stream', { date: youtube.webhookLastReceivedAt | date('j M Y, g:ia') }) }}</span>
+                        {% endif %}
+                        <button type="button" id="websub-subscribe-btn" class="btn small" style="margin-left: 8px;">
+                            {{ youtube.websubActive ? 'Renew' | t('social-stream') : 'Subscribe' | t('social-stream') }}
+                        </button>
+                        {% if not youtube.websubActive %}
+                            <div class="light" style="margin-top: 4px; font-size: 12px;">
+                                {{ 'Subscribing happens automatically when you connect, and renews itself every 9 days. Use this if the hub was unreachable at the time.' | t('social-stream') }}
+                            </div>
+                        {% endif %}
+                    </td>
+                </tr>
+                <tr>
+                    <th>{{ 'Daily Quota' | t('social-stream') }}</th>
+                    <td>
+                        {{ '{used} / {limit} units' | t('social-stream', { used: youtube.quotaUsed | number_format, limit: youtube.quotaLimit | number_format }) }}
+                        <span class="light"> · {{ 'resets at midnight Pacific Time' | t('social-stream') }}</span>
+                    </td>
+                </tr>
+                <tr>
+                    <th>{{ 'Rate Limit' | t('social-stream') }}</th>
+                    <td>
+                        {% if youtube.isRateLimited %}
+                            <span class="status pending"></span> {{ 'Cooldown active' | t('social-stream') }}
+                        {% else %}
+                            <span class="status active"></span> {{ 'No restrictions' | t('social-stream') }}
+                        {% endif %}
+                    </td>
+                </tr>
+                <tr>
+                    <th>{{ 'API' | t('social-stream') }}</th>
+                    <td><code>YouTube Data API v3</code></td>
+                </tr>
+            </tbody>
+        </table>
+
+        {% include 'social-stream/settings/_provider-actions' %}
+    </div>
+{% endif %}
+
+{{ forms.autosuggestField({
+    label: 'Google Client ID' | t('social-stream'),
+    instructions: 'From a Google Cloud project with the YouTube Data API v3 enabled. Supports environment variables.' | t('social-stream'),
+    id: 'appId',
+    name: 'appId',
+    value: youtube.appId,
+    suggestions: craft.cp.getEnvSuggestions(),
+    suggestEnvVars: true,
+}) }}
+
+{{ forms.autosuggestField({
+    label: 'Google Client Secret' | t('social-stream'),
+    instructions: 'From the same OAuth client. Supports environment variables.' | t('social-stream'),
+    id: 'appSecret',
+    name: 'appSecret',
+    value: youtube.appSecretIsEnvVar ? youtube.appSecret : '',
+    placeholder: (not youtube.appSecretIsEnvVar and youtube.hasAppSecret) ? '••••••••' : '',
+    suggestions: craft.cp.getEnvSuggestions(),
+    suggestEnvVars: true,
+}) }}
+
+{% set authInput %}
+    <a id="auth-btn" class="btn submit {% if not youtube.appId %}disabled{% endif %}" href="#">
+        {{ youtube.hasRefreshToken ? 'Reconnect YouTube Channel' | t('social-stream') : 'Connect YouTube Channel' | t('social-stream') }}
+    </a>
+    <p class="light" style="margin: 8px 0 0;">
+        {{ 'Add this redirect URI to the OAuth client:' | t('social-stream') }}
+        <code style="user-select: all;">{{ redirectUri }}</code>
+    </p>
+    {% if youtube.webhookCallbackUrl %}
+        <p class="light" style="margin: 4px 0 0;">
+            {{ 'Push notifications are delivered to:' | t('social-stream') }}
+            <code style="user-select: all;">{{ youtube.webhookCallbackUrl }}</code>
+        </p>
+    {% endif %}
+{% endset %}
+
+{{ forms.field({
+    label: 'Authorisation' | t('social-stream'),
+    id: 'auth-section',
+}, authInput) }}
+
+<div class="pane" style="padding: 12px 16px; background: var(--ui-warning-bg-color, #fff3cd);">
+    <p style="margin: 0; color: var(--ui-warning-text-color, #856404);">
+        <strong>{{ 'Publish your Google app.' | t('social-stream') }}</strong>
+        {{ 'While it is in Testing mode, Google expires refresh tokens after 7 days and the channel silently disconnects every week. Publishing needs branding and a privacy policy URL — not a full verification review, for your own channel.' | t('social-stream') }}
+    </p>
+</div>
