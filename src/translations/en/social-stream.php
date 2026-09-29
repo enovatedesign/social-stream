@@ -107,6 +107,7 @@ return [
     'Push Notifications' => 'Push Notifications',
     'Active until {date}' => 'Active until {date}',
     'Lease expired {date}' => 'Lease expired {date}',
+    'Requested — waiting for the hub to confirm, which usually takes a few seconds. Reload the page.' => 'Requested — waiting for the hub to confirm, which usually takes a few seconds. Reload the page.',
     'Not subscribed — new uploads appear when the cache expires' => 'Not subscribed — new uploads appear when the cache expires',
     'Subscribe' => 'Subscribe',
     'Renew' => 'Renew',

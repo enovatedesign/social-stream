@@ -63,6 +63,8 @@
                         <span class="status {{ youtube.websubActive ? 'active' : 'pending' }}"></span>
                         {% if youtube.websubActive %}
                             {{ 'Active until {date}' | t('social-stream', { date: youtube.websubExpiresAt | date('j M Y, g:ia') }) }}
+                        {% elseif youtube.websubPending %}
+                            {{ 'Requested — waiting for the hub to confirm, which usually takes a few seconds. Reload the page.' | t('social-stream') }}
                         {% elseif youtube.websubExpiresAt %}
                             {{ 'Lease expired {date}' | t('social-stream', { date: youtube.websubExpiresAt | date('j M Y, g:ia') }) }}
                         {% else %}
@@ -74,7 +76,7 @@
                         <button type="button" id="websub-subscribe-btn" class="btn small" style="margin-left: 8px;">
                             {{ youtube.websubActive ? 'Renew' | t('social-stream') : 'Subscribe' | t('social-stream') }}
                         </button>
-                        {% if not youtube.websubActive %}
+                        {% if not youtube.websubActive and not youtube.websubPending %}
                             <div class="light" style="margin-top: 4px; font-size: 12px;">
                                 {{ 'Subscribing happens automatically when you save a channel, and renews itself every 9 days. Use this if the hub was unreachable at the time.' | t('social-stream') }}
                             </div>

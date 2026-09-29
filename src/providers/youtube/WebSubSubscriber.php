@@ -34,6 +34,36 @@ class WebSubSubscriber
     public const DEFAULT_LEASE_SECONDS = 864000;
 
     /**
+     * How long a subscribe request is reported as awaiting the hub's verification.
+     *
+     * Generous for a callback that normally lands within seconds: the flag only
+     * changes what the CP says, and saying "waiting" for a minute too long is a far
+     * better failure than saying "not subscribed" while it is being set up.
+     */
+    private const PENDING_TTL = 120;
+
+    /**
+     * Whether a subscribe request is still waiting on the hub's verification call.
+     */
+    public static function isPending(int $siteId): bool
+    {
+        return Craft::$app->cache->get(self::pendingCacheKey($siteId)) !== false;
+    }
+
+    /**
+     * Forget that a subscription was awaiting verification — the answer has arrived.
+     */
+    public static function clearPending(int $siteId): void
+    {
+        Craft::$app->cache->delete(self::pendingCacheKey($siteId));
+    }
+
+    private static function pendingCacheKey(int $siteId): string
+    {
+        return 'social-stream:websub-pending:' . $siteId;
+    }
+
+    /**
      * @return array{success: bool, error: string|null}
      */
     public function subscribe(int $siteId, string $channelId): array
@@ -121,6 +151,13 @@ class WebSubSubscriber
                 $connection = SocialStream::$plugin->token->getConnection($siteId, YouTubeProvider::handle());
                 $connection->websubExpiresAt = null;
                 $connection->save();
+                Craft::$app->cache->delete(self::pendingCacheKey($siteId));
+            } else {
+                // The lease is not stored until the hub calls back, which is usually a
+                // second or two away — long enough for the page that triggered this to
+                // render first. Without this flag it would say "not subscribed", which
+                // is the one thing that has not happened.
+                Craft::$app->cache->set(self::pendingCacheKey($siteId), true, self::PENDING_TTL);
             }
 
             SocialStream::info(

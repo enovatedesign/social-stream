@@ -80,6 +80,7 @@ class WebhookController extends Controller
             foreach ($connections as $connection) {
                 $connection->websubExpiresAt = null;
                 $connection->save();
+                WebSubSubscriber::clearPending((int) $connection->siteId);
             }
 
             SocialStream::warning(
@@ -104,6 +105,7 @@ class WebhookController extends Controller
         foreach ($connections as $connection) {
             $connection->websubExpiresAt = $expiresAt;
             $connection->save();
+            WebSubSubscriber::clearPending((int) $connection->siteId);
         }
 
         SocialStream::info(

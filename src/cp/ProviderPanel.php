@@ -8,6 +8,7 @@ use DateTime;
 use craft\helpers\UrlHelper;
 use enovate\socialstream\providers\InstagramProvider;
 use enovate\socialstream\providers\youtube\QuotaMeter;
+use enovate\socialstream\providers\youtube\WebSubSubscriber;
 use enovate\socialstream\providers\YouTubeProvider;
 use enovate\socialstream\records\ConnectionRecord;
 use enovate\socialstream\services\CacheService;
@@ -198,6 +199,7 @@ class ProviderPanel
             'isConnected' => $this->isPresent($connection->providerUserId),
             'websubExpiresAt' => $connection->websubExpiresAt,
             'websubActive' => $this->websubIsActive($connection),
+            'websubPending' => WebSubSubscriber::isPending($siteId),
             'webhookLastReceivedAt' => $connection->webhookLastReceivedAt,
             'webhookCallbackUrl' => $provider instanceof YouTubeProvider
                 ? $provider->websubCallbackUrl()
