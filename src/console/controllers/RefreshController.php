@@ -18,8 +18,9 @@ use yii\console\ExitCode;
  * Each invocation:
  *   1. Pre-warms the stream cache by queueing a RefreshStreamJob per connection.
  *   2. Checks each connection's token expiry and queues a RefreshTokenJob when
- *      a token is within TokenService::REFRESH_THRESHOLD_DAYS of expiry. Connections
- *      that renew their access token inline from a refresh token (YouTube) are
+ *      a token is within TokenService::REFRESH_THRESHOLD_DAYS of expiry. Providers
+ *      that don't use OAuth at all (YouTube) are skipped, as are connections
+ *      that renew their access token inline from a refresh token, which are
  *      skipped — step 1 already exercises that path every run.
  *
  * Safe to run on every web host — both jobs hold a DB-backed lock across the queue-table
@@ -83,6 +84,12 @@ class RefreshController extends Controller
         $tokensQueued = 0;
 
         foreach ($providerHandles as $handle) {
+            // A provider without OAuth has no credential that expires, so the whole
+            // token half of this run is skipped for it — the stream pre-warm above
+            // is all it needs.
+            $registered = SocialStream::$plugin->providers->getProviderByHandle($handle);
+            $usesOAuth = $registered === null || $registered::usesOAuth();
+
             $query = ['provider' => $handle];
             if ($this->site !== null) {
                 $query['siteId'] = $this->site;
@@ -103,7 +110,7 @@ class RefreshController extends Controller
                     $this->stdout("  Site {$connection->siteId} ({$handle}): stream refresh already queued" . PHP_EOL);
                 }
 
-                if ($this->shouldRefreshToken($connection)) {
+                if ($usesOAuth && $this->shouldRefreshToken($connection)) {
                     $expiry = $this->formatExpiry($connection->tokenExpiresAt);
 
                     if (RefreshTokenJob::pushIfNotQueued($connection->siteId, $handle)) {

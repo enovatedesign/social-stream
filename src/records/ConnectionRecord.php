@@ -12,9 +12,11 @@ use craft\db\ActiveRecord;
  * @property string $provider
  * @property string|null $appId
  * @property string|null $appSecret
+ * @property string|null $apiKey
  * @property string|null $accessToken
  * @property string|null $refreshToken
  * @property string|null $providerUserId
+ * @property string|null $channelRef
  * @property string|null $tokenExpiresAt
  * @property string|null $lastFetchAt
  * @property string|null $lastError
@@ -59,6 +61,26 @@ class ConnectionRecord extends ActiveRecord
     public function setRefreshToken(?string $value): void
     {
         $this->writeIfPresent('refreshToken', $value);
+    }
+
+    public function getApiKey(): ?string
+    {
+        return $this->readIfPresent('apiKey');
+    }
+
+    public function setApiKey(?string $value): void
+    {
+        $this->writeIfPresent('apiKey', $value);
+    }
+
+    public function getChannelRef(): ?string
+    {
+        return $this->readIfPresent('channelRef');
+    }
+
+    public function setChannelRef(?string $value): void
+    {
+        $this->writeIfPresent('channelRef', $value);
     }
 
     public function getWebsubExpiresAt(): ?string

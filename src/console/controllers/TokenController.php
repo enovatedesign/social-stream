@@ -60,6 +60,15 @@ class TokenController extends Controller
         $queued = 0;
 
         foreach ($providerHandles as $provider) {
+            $registered = SocialStream::$plugin->providers->getProviderByHandle($provider);
+
+            // Nothing to refresh where there is no OAuth — say so rather than
+            // reporting zero connections, which reads as a misconfiguration.
+            if ($registered !== null && !$registered::usesOAuth()) {
+                $this->stdout("{$provider} authenticates with an API key — nothing to refresh." . PHP_EOL);
+                continue;
+            }
+
             if ($this->site !== null) {
                 $queued += $this->queue($this->site, $provider) ? 1 : 0;
                 continue;

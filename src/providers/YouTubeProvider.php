@@ -5,6 +5,7 @@ namespace enovate\socialstream\providers;
 use Craft;
 use enovate\socialstream\base\Provider;
 use enovate\socialstream\models\Post;
+use enovate\socialstream\providers\youtube\ChannelReference;
 use enovate\socialstream\providers\youtube\QuotaMeter;
 use enovate\socialstream\providers\youtube\ShortsResolver;
 use enovate\socialstream\providers\youtube\VideoMapper;
@@ -15,6 +16,10 @@ use GuzzleHttp\Exception\GuzzleException;
 
 /**
  * YouTube Data API v3 provider.
+ *
+ * Authenticates with an API key against a channel the admin names, rather than with
+ * OAuth against a channel the authorised account happens to own — see
+ * {@see usesOAuth()}.
  *
  * Reading a channel's uploads takes three calls rather than Instagram's one: the
  * channel's uploads playlist ID (cached for a day — it never changes), a page of
@@ -29,6 +34,13 @@ class YouTubeProvider extends Provider
     public const MEDIA_TYPE_VIDEO = 'VIDEO';
 
     public const MEDIA_TYPE_SHORT = 'SHORT';
+
+    public const NO_API_KEY = 'No YouTube API key configured for this site.';
+
+    public const NO_CHANNEL = 'No YouTube channel configured for this site.';
+
+    public const UNREADABLE_CHANNEL = 'That does not look like a YouTube channel. Paste the address of '
+        . 'the channel page (youtube.com/@yourchannel), its channel ID, or a link to one of its videos.';
 
     /**
      * The largest page either endpoint accepts. Always request it: `playlistItems`
@@ -72,6 +84,19 @@ class YouTubeProvider extends Provider
         return false;
     }
 
+    /**
+     * Reading a public channel's uploads needs an API key, not an authorised user:
+     * `channels.list`, `playlistItems.list` and `videos.list` all serve public data.
+     * The one thing that did need OAuth was `mine=true` channel discovery, and the
+     * channel is configured explicitly instead.
+     *
+     * The trade is private and unlisted videos, which no key can see.
+     */
+    public static function usesOAuth(): bool
+    {
+        return false;
+    }
+
     // Stream
     // =========================================================================
 
@@ -90,19 +115,19 @@ class YouTubeProvider extends Provider
         $mediaType = $this->normaliseMediaType($options['mediaType'] ?? null);
         $after = $options['after'] ?? null;
 
-        $token = SocialStream::$plugin->token->getAccessToken($siteId, $this->getHandle());
+        $apiKey = $this->apiKey($siteId);
 
-        if (!$token) {
-            return $this->streamErrorResponse('No access token configured for this site.');
+        if (!$apiKey) {
+            return $this->streamErrorResponse(self::NO_API_KEY);
         }
 
-        $channelId = $this->resolveChannelId($siteId, $token);
+        $channelId = $this->resolveChannelId($siteId, $apiKey);
 
         if ($channelId === null) {
-            return $this->streamErrorResponse('Could not determine the connected YouTube channel ID.');
+            return $this->streamErrorResponse($this->noChannelMessage($siteId));
         }
 
-        $playlist = $this->uploadsPlaylistId($siteId, $channelId, $token);
+        $playlist = $this->uploadsPlaylistId($siteId, $channelId, $apiKey);
 
         if ($playlist['error'] !== null) {
             return $this->streamErrorResponse($playlist['error']);
@@ -117,7 +142,7 @@ class YouTubeProvider extends Provider
         $pagesUsed = 0;
 
         while (count($collected) < $limit && $pagesUsed < $maxPages) {
-            $page = $this->fetchPlaylistPage($playlist['id'], $token, $nextCursor, $pageSize, $siteId);
+            $page = $this->fetchPlaylistPage($playlist['id'], $apiKey, $nextCursor, $pageSize, $siteId);
 
             if ($page['error'] !== null) {
                 // A failure part-way through pagination fails the whole fetch. Handing
@@ -138,7 +163,7 @@ class YouTubeProvider extends Provider
             $pagesUsed++;
 
             if ($page['videoIds'] !== []) {
-                $videos = $this->fetchVideos($page['videoIds'], $token, $siteId);
+                $videos = $this->fetchVideos($page['videoIds'], $apiKey, $siteId);
 
                 if ($videos['error'] !== null) {
                     return $this->streamErrorResponse($videos['error']);
@@ -207,20 +232,22 @@ class YouTubeProvider extends Provider
 
     protected function doFetchProfile(int $siteId): array
     {
-        $token = SocialStream::$plugin->token->getAccessToken($siteId, $this->getHandle());
+        $apiKey = $this->apiKey($siteId);
 
-        if (!$token) {
-            return $this->errorResponse('No access token configured for this site.');
+        if (!$apiKey) {
+            return $this->errorResponse(self::NO_API_KEY);
         }
 
-        $channelId = $this->resolveChannelId($siteId, $token);
+        $channelId = $this->resolveChannelId($siteId, $apiKey);
+
+        if ($channelId === null) {
+            return $this->errorResponse($this->noChannelMessage($siteId));
+        }
 
         $result = $this->request(
             'channels',
-            $channelId === null
-                ? ['part' => 'snippet,statistics', 'mine' => 'true']
-                : ['part' => 'snippet,statistics', 'id' => $channelId],
-            $token,
+            ['part' => 'snippet,statistics', 'id' => $channelId],
+            $apiKey,
             $siteId,
         );
 
@@ -263,13 +290,15 @@ class YouTubeProvider extends Provider
     // =========================================================================
 
     /**
-     * Get the connected channel's ID.
+     * Get the configured channel's ID.
      *
-     * Lookup order: DB column (survives cache flushes) → cache → `channels.list`
-     * with `mine=true`. Mirrors how the Instagram provider resolves its user ID, and
-     * back-fills the column so later lookups skip the API.
+     * Lookup order: DB column (survives cache flushes) → cache → resolve whatever the
+     * admin typed into the channel field. The resolved `UC…` ID is what every call
+     * keys on, and it is deliberately not re-derived from the handle each time: a
+     * handle can be changed by its owner and claimed by someone else, so a site that
+     * looked it up on every fetch could quietly start reading a different channel.
      */
-    public function resolveChannelId(int $siteId, ?string $token = null): ?string
+    public function resolveChannelId(int $siteId, ?string $apiKey = null): ?string
     {
         $connection = SocialStream::$plugin->token->getConnection($siteId, $this->getHandle());
 
@@ -287,31 +316,127 @@ class YouTubeProvider extends Provider
             return $cached;
         }
 
-        $token ??= SocialStream::$plugin->token->getAccessToken($siteId, $this->getHandle());
+        $apiKey ??= $this->apiKey($siteId);
+        $reference = $connection->channelRef;
 
-        if (!$token) {
+        if (!$apiKey || $reference === null || $reference === '') {
             return null;
         }
 
-        $result = $this->request('channels', ['part' => 'id', 'mine' => 'true'], $token, $siteId);
+        $resolved = $this->resolveChannelReference($reference, $apiKey, $siteId);
+
+        if ($resolved['id'] === null) {
+            $this->recordError($siteId, $resolved['error']);
+
+            return null;
+        }
+
+        Craft::$app->cache->set($cacheKey, $resolved['id'], self::CHANNEL_ID_TTL);
+        $connection->providerUserId = $resolved['id'];
+        $connection->save();
+
+        return $resolved['id'];
+    }
+
+    /**
+     * Drop the cached channel ID for a site.
+     *
+     * {@see resolveChannelId()} falls back to this cache when the column is empty, so
+     * without this a channel that was changed or disconnected would come straight
+     * back on the next fetch and the site would keep reading the old one.
+     */
+    public function forgetChannel(int $siteId): void
+    {
+        Craft::$app->cache->delete('social-stream:channel-id:' . $this->getHandle() . ':' . $siteId);
+    }
+
+    /**
+     * Resolve a channel URL, handle or ID to a canonical channel ID.
+     *
+     * Public so the CP can resolve at save time and show the admin which channel it
+     * found: a mistyped handle is a valid handle belonging to somebody else, and
+     * without that confirmation the first sign of trouble is a feed full of a
+     * stranger's videos.
+     *
+     * @return array{id: string|null, error: string|null}
+     */
+    public function resolveChannelReference(string $reference, string $apiKey, int $siteId): array
+    {
+        $parsed = ChannelReference::parse($reference);
+
+        if ($parsed === null) {
+            return ['id' => null, 'error' => self::UNREADABLE_CHANNEL];
+        }
+
+        // A channel ID needs no lookup, but it is still verified: an ID that matches
+        // the shape and nothing on YouTube would otherwise be stored happily and fail
+        // on every fetch afterwards.
+        if ($parsed['type'] === ChannelReference::TYPE_VIDEO) {
+            return $this->channelIdFromVideo($parsed['value'], $apiKey, $siteId);
+        }
+
+        $query = match ($parsed['type']) {
+            ChannelReference::TYPE_ID => ['id' => $parsed['value']],
+            ChannelReference::TYPE_HANDLE => ['forHandle' => '@' . $parsed['value']],
+            ChannelReference::TYPE_USERNAME => ['forUsername' => $parsed['value']],
+        };
+
+        $result = $this->request('channels', ['part' => 'id'] + $query, $apiKey, $siteId);
 
         if ($result['error'] !== null) {
-            return null;
+            return ['id' => null, 'error' => $result['error']];
         }
 
         $channelId = $result['data']['items'][0]['id'] ?? null;
 
-        if ($channelId === null) {
-            $this->recordError($siteId, 'The Google account has no YouTube channel.');
+        return $channelId === null
+            ? ['id' => null, 'error' => 'YouTube has no channel matching "' . $reference . '".']
+            : ['id' => (string) $channelId, 'error' => null];
+    }
 
-            return null;
+    /**
+     * The channel a video belongs to — for an admin who has a link to one of their
+     * own videos to hand rather than a channel URL.
+     *
+     * @return array{id: string|null, error: string|null}
+     */
+    private function channelIdFromVideo(string $videoId, string $apiKey, int $siteId): array
+    {
+        $result = $this->request('videos', ['part' => 'snippet', 'id' => $videoId], $apiKey, $siteId);
+
+        if ($result['error'] !== null) {
+            return ['id' => null, 'error' => $result['error']];
         }
 
-        Craft::$app->cache->set($cacheKey, $channelId, self::CHANNEL_ID_TTL);
-        $connection->providerUserId = $channelId;
-        $connection->save();
+        $channelId = $result['data']['items'][0]['snippet']['channelId'] ?? null;
 
-        return $channelId;
+        return $channelId === null
+            ? ['id' => null, 'error' => 'YouTube has no video with the ID "' . $videoId . '", so the channel could not be identified.']
+            : ['id' => (string) $channelId, 'error' => null];
+    }
+
+    /**
+     * The API key for this site, resolved through any environment variable.
+     */
+    private function apiKey(int $siteId): ?string
+    {
+        return SocialStream::$plugin->token->getApiKey($siteId, $this->getHandle());
+    }
+
+    /**
+     * Why there is no channel: nothing entered, or something entered that didn't
+     * resolve. The stored error is the more useful of the two when it exists.
+     */
+    private function noChannelMessage(int $siteId): string
+    {
+        $connection = SocialStream::$plugin->token->getConnection($siteId, $this->getHandle());
+        $reference = $connection->channelRef;
+
+        if ($reference === null || $reference === '') {
+            return self::NO_CHANNEL;
+        }
+
+        return $connection->lastError ?: 'Could not resolve "' . $reference . '" to a YouTube channel.';
     }
 
     /**
@@ -320,7 +445,7 @@ class YouTubeProvider extends Provider
      *
      * @return array{id: string|null, error: string|null}
      */
-    private function uploadsPlaylistId(int $siteId, string $channelId, string $token): array
+    private function uploadsPlaylistId(int $siteId, string $channelId, string $apiKey): array
     {
         $cacheKey = 'social-stream:youtube-uploads:' . $channelId;
         $cached = Craft::$app->cache->get($cacheKey);
@@ -332,7 +457,7 @@ class YouTubeProvider extends Provider
         $result = $this->request(
             'channels',
             ['part' => 'contentDetails', 'id' => $channelId],
-            $token,
+            $apiKey,
             $siteId,
         );
 
@@ -368,7 +493,7 @@ class YouTubeProvider extends Provider
      */
     private function fetchPlaylistPage(
         string $playlistId,
-        string $token,
+        string $apiKey,
         ?string $pageToken,
         int $maxResults,
         int $siteId,
@@ -383,7 +508,7 @@ class YouTubeProvider extends Provider
             $query['pageToken'] = $pageToken;
         }
 
-        $result = $this->request('playlistItems', $query, $token, $siteId);
+        $result = $this->request('playlistItems', $query, $apiKey, $siteId);
 
         if ($result['error'] !== null) {
             return ['videoIds' => [], 'nextCursor' => null, 'error' => $result['error']];
@@ -416,7 +541,7 @@ class YouTubeProvider extends Provider
      * @param string[] $videoIds
      * @return array{videos: array<string, array>, error: string|null}
      */
-    private function fetchVideos(array $videoIds, string $token, int $siteId): array
+    private function fetchVideos(array $videoIds, string $apiKey, int $siteId): array
     {
         $result = $this->request(
             'videos',
@@ -426,7 +551,7 @@ class YouTubeProvider extends Provider
                 // and the ID list is already capped at the batch size.
                 'id' => implode(',', array_slice($videoIds, 0, self::MAX_RESULTS)),
             ],
-            $token,
+            $apiKey,
             $siteId,
         );
 
@@ -532,20 +657,23 @@ class YouTubeProvider extends Provider
     /**
      * Make one Data API call, counting the quota unit it costs.
      *
+     * Every endpoint used here reads public data, which an API key is enough for.
+     *
      * @return array{data: array, error: string|null}
      */
-    private function request(string $endpoint, array $query, string $token, int $siteId): array
+    private function request(string $endpoint, array $query, string $apiKey, int $siteId): array
     {
         try {
             $client = Craft::createGuzzleClient();
             $this->quota()->record();
 
             $response = $client->get(self::API_BASE_URL . '/' . $endpoint, [
-                'query' => $query,
-                'headers' => [
-                    'Authorization' => 'Bearer ' . $token,
-                    'Accept' => 'application/json',
-                ],
+                // The key goes in the query string because that is the only place the
+                // Data API reads it. It is a credential in a URL, so it must never be
+                // logged: the error paths below quote the API's message, never the
+                // request.
+                'query' => $query + ['key' => $apiKey],
+                'headers' => ['Accept' => 'application/json'],
             ]);
 
             $data = json_decode($response->getBody()->getContents(), true);
@@ -570,7 +698,7 @@ class YouTubeProvider extends Provider
 
     /**
      * Record an API error and apply the state it implies: a cooldown until the quota
-     * resets, a short cooldown for a burst limit, or the re-auth flag.
+     * resets, a short cooldown for a burst limit, or an unusable API key.
      *
      * @return string The error message, for returning to the caller.
      */
@@ -602,14 +730,21 @@ class YouTubeProvider extends Provider
             return $rateMessage;
         }
 
-        $this->recordError($siteId, $message);
+        // An API key Google will not accept: wrong, deleted, or restricted to an IP
+        // or referrer this server doesn't match. None of it recovers on its own, and
+        // none of it is fixed by reconnecting — the key itself has to be corrected in
+        // the CP, so the message says so rather than leaving the admin with Google's
+        // "API key not valid" and no idea where to put it.
+        if ($status === 401 || ($status === 403 && in_array($reason, ['forbidden', 'keyInvalid', 'keyExpired', 'ipRefererBlocked'], true))) {
+            $keyMessage = 'YouTube rejected the API key: ' . $message
+                . ' Check the key on this page, and that its restrictions allow this server\'s IP address '
+                . 'and the YouTube Data API.';
+            $this->recordError($siteId, $keyMessage);
 
-        // 401 is Google's answer for a credential it will not accept. The inline
-        // refresh should have prevented a merely expired access token reaching this
-        // point, so what is left needs a human to reconnect.
-        if ($status === 401) {
-            $this->markNeedsReauth($siteId);
+            return $keyMessage;
         }
+
+        $this->recordError($siteId, $message);
 
         return $message;
     }

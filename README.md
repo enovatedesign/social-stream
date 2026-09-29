@@ -16,8 +16,7 @@ For Instagram:
 
 For YouTube:
 
-- A Google account with a YouTube channel
-- A Google Cloud project with the **YouTube Data API v3** enabled and an OAuth 2.0 client
+- A Google Cloud project with the **YouTube Data API v3** enabled and an API key
 
 You need only the provider you intend to use — neither is required for the other.
 
@@ -47,7 +46,9 @@ php craft up
 
 ## Before you start
 
-Authorisation has to happen on a publicly accessible URL, because the provider's OAuth callback needs to reach your site. That applies to Instagram and Google alike, and YouTube's push notifications need a reachable URL too. You can't complete it against a local domain unless you tunnel it out with [expose.dev](https://expose.dev/), `herd share`, or similar.
+Instagram's authorisation has to happen on a publicly accessible URL, because its OAuth callback needs to reach your site. You can't complete it against a local domain unless you tunnel it out with [expose.dev](https://expose.dev/), `herd share`, or similar.
+
+YouTube has no authorisation step — it uses an API key — but its push notifications do need a URL the hub can reach. Without one the feed still updates, just on the refresh cron rather than within seconds of an upload.
 
 You don't need the Instagram credentials yourself, but someone who has them must be available for two steps:
 
@@ -110,47 +111,53 @@ You can use the app in **Development Mode** with your own Instagram account adde
 
 ## YouTube Setup
 
+YouTube reads a public channel with an API key. There is no OAuth app to create, no consent screen to configure, no redirect URI to register and nothing that expires — but also no access to private or unlisted videos, which no API key can see.
+
 ### 1. Create a Google Cloud project and enable the API
 
 1. Go to the [Google Cloud Console](https://console.cloud.google.com/) and create a project (e.g. "My Site Social Stream").
 2. Under **APIs & Services > Library**, find **YouTube Data API v3** and click **Enable**.
 
-### 2. Configure the OAuth consent screen
+No billing account is needed. The API is free within its daily quota of 10,000 units, which this plugin stays well inside — see [Quota](#quota).
 
-1. Under **APIs & Services > OAuth consent screen**, choose **External** and fill in the app name, support email and developer contact.
-2. Add the scope `https://www.googleapis.com/auth/youtube.readonly`. Nothing else is requested.
-3. **Publish the app** (**Publish app** / "Push to production"). See the warning below — this step is not optional in practice.
+### 2. Create an API key
 
-### 3. Create the OAuth client
+1. Under **APIs & Services > Credentials**, click **Create credentials > API key**.
+2. Copy the key.
+3. Click **Edit API key** and restrict it, which takes a minute and is worth doing — an unrestricted key can be spent by anyone who obtains it:
+   - **Application restrictions** → **IP addresses**, and add your server's outbound IP. Every call this plugin makes is server-side, so no browser ever needs the key. (Don't use **HTTP referrers**: that restriction is for keys used from a browser and will reject server-side calls.)
+   - **API restrictions** → **Restrict key** → **YouTube Data API v3**.
 
-1. Under **APIs & Services > Credentials**, click **Create credentials > OAuth client ID**.
-2. Choose **Web application**.
-3. Under **Authorised redirect URIs**, add your site's callback URL:
+### 3. Enter the key and channel in Craft
 
-   ```
-   https://your-craft-site.com/actions/social-stream/auth/callback
-   ```
+1. In Craft, go to **Social Stream**, press **Connect** on the YouTube row.
+2. Paste the key into **API Key**. It is stored encrypted, and it can be the name of an environment variable — `$YOUTUBE_API_KEY` — if you'd rather keep it in `.env`.
+3. Put the channel in **Channel**. Open the channel on YouTube and copy what's in the address bar; all of these work:
 
-   The exact URL is shown on the plugin's **YouTube** page — copy it from there rather than typing it, since it must match character for character. It is the same URL Instagram uses: one callback serves every provider.
-4. Copy the **Client ID** and **Client secret**.
+   | What you paste | Example |
+   |---|---|
+   | The channel's handle URL | `https://www.youtube.com/@EssexWebDevelopers` |
+   | Just the handle | `@EssexWebDevelopers` |
+   | A channel ID URL | `https://www.youtube.com/channel/UCuAXFkgsw1L7xaCfnd5JJOw` |
+   | Just the channel ID | `UCuAXFkgsw1L7xaCfnd5JJOw` |
+   | A legacy username URL | `https://www.youtube.com/user/SomeName` |
+   | A link to any video on the channel | `https://www.youtube.com/watch?v=aqz-KE-bpKQ` |
 
-### 4. Connect the channel
+4. Save. The channel is resolved on the spot and the Connection Status panel appears, showing the channel name, avatar and subscriber count.
 
-1. In Craft, go to **Social Stream**, press **Connect** on the YouTube row, and enter the **Google Client ID** and **Google Client Secret** (or the names of environment variables holding them), then save.
-2. Click **Connect YouTube Channel**, choose the Google account that owns the channel, and approve the read-only access.
-3. You're returned to the YouTube page, where the Connection Status panel should show **Status: Connected** along with the channel name and a subscribed **Push Notifications** row.
+**Check the channel it found is yours.** A mistyped handle is very often a *valid* handle belonging to somebody else, and the plugin cannot tell the difference — the panel is there so a wrong one is caught immediately rather than when the site fills with a stranger's uploads.
 
-### ⚠️ Publish your Google app, or YouTube disconnects every 7 days
+The old `youtube.com/c/SomeName` URLs are the one awkward case: there is no API parameter that resolves them. The plugin tries the name as a handle, which usually works because Google's auto-assigned handles tend to match the old custom name, but if it fails, open the channel and copy the `@handle` or `/channel/UC…` URL instead.
 
-While a Google app is in **Testing** mode, Google expires its refresh tokens after **7 days**. The plugin's stored credential simply stops working, and the channel silently disconnects — weekly, forever, until someone reconnects by hand.
+### What gets stored
 
-Publishing the app fixes it. For first-party use — your own channel, on your own site — publishing needs branding details and a privacy policy URL, but **not** a full verification review: that is only required when other people's Google accounts will use the app. Unverified published apps show an "unverified app" warning on the consent screen, which the site owner can click through once.
+The channel is resolved once, to its canonical `UC…` channel ID, and that ID is what every later request uses. Handles are deliberately not used as the durable identifier: a handle can be changed by its owner and later claimed by someone else, so a site that looked one up on every fetch could quietly start reading a different channel. Renaming your channel or its handle will not break the feed.
 
-The plugin detects this state rather than failing quietly: when Google rejects the refresh token, the stored credentials are cleared and the YouTube page reports
+The text you typed is kept alongside it, so the field shows back what you entered rather than an ID you have never seen.
 
-> YouTube refresh token expired or revoked. Please reconnect your YouTube channel. If this happens every 7 days, your Google app may be in Testing mode — see the documentation for how to publish it.
+### Private and unlisted videos
 
-If you see that message on roughly a weekly cadence, the app is still in Testing.
+Not supported, and not fixable with a setting: an API key can only read what a logged-out visitor can read. If a channel's uploads need to be visible to the plugin before they are public to everyone, YouTube requires OAuth as the channel's owner — which means a Google Cloud OAuth app, a consent screen, a published (or Internal) app and a credential that has to be reconnected when Google rejects it. That was the previous design, and it was removed in 1.4.0: the setup cost fell on every site that installed the plugin, while private videos were needed by almost none of them.
 
 ### Push notifications (WebSub)
 
@@ -180,9 +187,9 @@ Each provider's page holds its credentials, its authorisation button, and a heal
 | Provider | Credentials |
 |---|---|
 | Instagram | **Instagram App ID** and **App Secret**, from the Meta Developer portal |
-| YouTube | **Google Client ID** and **Client Secret**, from a Google Cloud project with the YouTube Data API v3 enabled |
+| YouTube | An **API Key** from a Google Cloud project with the YouTube Data API v3 enabled, plus the **Channel** to read |
 
-Both accept `$ENV_VAR` syntax, and each page shows the exact redirect URI to register with that provider. Configure only the providers you use — nothing is required.
+Both accept `$ENV_VAR` syntax. Instagram's page shows the exact redirect URI to register with Meta; YouTube has no redirect URI, because it has no authorisation step. Configure only the providers you use — nothing is required.
 
 #### Configuration Tab
 
@@ -511,7 +518,7 @@ A single cron entry handles both stream cache pre-warming and Instagram token re
 
 Each run pushes a `RefreshStreamJob` per connection, and additionally queues a `RefreshTokenJob` for any connection whose Instagram token is within 7 days of expiry. No separate daily cron for token refresh is needed — it's handled opportunistically.
 
-YouTube connections are deliberately skipped by that second step. A Google access token lasts an hour, so an expiry threshold measured in days would queue a job on every single run — and it would learn nothing, because the stream pre-warm renews the access token inline through the same code path and surfaces a dead refresh token once per run anyway.
+YouTube connections are skipped by that second step entirely: an API key doesn't expire, so there is nothing to refresh. The stream pre-warm still runs for them.
 
 Instagram token refresh happens **only** on this path, so a cron that silently never runs will let a token expire with nothing else to signal it. Verify yours actually fires — `cron` uses a minimal `PATH`, so an unqualified `php` that works in your shell may not resolve there.
 
@@ -599,13 +606,11 @@ Two action buttons are available:
 - **Test Connection** — makes a `GET /me` call and displays the account name and type. This is a live call even when the connection is flagged as needing re-authorisation, so using it clears the flag on a connection that has recovered. It deliberately leaves **Last successful fetch** and **Last error** alone: it fetches no posts, so it has nothing to say about the stream.
 - **Refresh Stream Now** — queues a background stream refresh immediately
 
-The YouTube panel reports the same stream diagnostics plus what is specific to Google's credential model:
+The YouTube panel reports the same stream diagnostics plus what is specific to it:
 
-- **Status** — green when a refresh token is stored and accepted, red when Google has rejected it
+- **Status** — green once a channel has been resolved. There is no credential expiry to report: an API key doesn't have one
 - **Channel** — name, `@handle` and subscriber count, from the cached profile response. Opening the settings page never spends API quota, so these appear once something has fetched the profile — pressing **Test Connection** is the quickest way
-- **Channel ID** — the `UC…` identifier, which is also what push notifications are routed by
-- **Access token** — masked, with its expiry. No action is ever needed here; it is renewed automatically
-- **Refresh token** — stored or missing. Missing means reconnecting is the only way forward
+- **Channel ID** — the `UC…` identifier every request uses, and what push notifications are routed by
 - **Push Notifications** — the WebSub lease state and when a notification last arrived. "Not subscribed" is a degraded state, not a broken one: uploads then appear when the cache expires
 - **Daily quota** — units spent today against the 10,000 limit, resetting at midnight Pacific Time. It is a local count for diagnosis, not Google's ledger — the Cloud Console is authoritative
 - **Test Connection**, **Refresh Stream Now** and **Disconnect**. Disconnecting unsubscribes from the hub and forgets the tokens and channel, keeping the client ID and secret so the same channel can be reconnected in one click
@@ -668,7 +673,7 @@ The plugin logs every refresh outcome to `storage/logs/social-stream-*.log`, so 
 
 Distinct from an expired token: the provider returned OAuthException code 190, meaning the credential was expired, revoked, or invalidated (e.g. by an Instagram password change). Meta will not refresh a token in this state, so re-authorising from the plugin's **Instagram** page is the only route back.
 
-While the connection is in this state the plugin suspends stream API calls rather than repeating a request it knows will fail, and the cron stops queueing token refreshes for it — Meta will not refresh a credential it has already refused. The same suppression applies to a YouTube connection whose refresh token Google has rejected.
+While the connection is in this state the plugin suspends stream API calls rather than repeating a request it knows will fail, and the cron stops queueing token refreshes for it — Meta will not refresh a credential it has already refused.
 
 The flag clears in three ways: re-authorising, a successful **Test Connection**, or the hourly probe. The probe lets a single stream request through every 60 minutes; if the rejection was transient and the credential works again, that request succeeds and the flag clears with no intervention. A genuinely dead token simply fails the probe, and suppression continues at a cost of one API call an hour.
 
@@ -692,13 +697,19 @@ There is nothing to fix on the Craft side: no URL is served, so the video cannot
 
 If Instagram withholds the thumbnail too, the post has nothing renderable at all and `hasMedia()` returns false, so filtering on it (see [Fetching the Stream](#fetching-the-stream)) skips the post instead of failing the page.
 
-### YouTube disconnects every 7 days
+### YouTube rejected the API key
 
-Your Google app is in **Testing** mode, where Google expires refresh tokens after a week. Publish it — see [Publish your Google app](#️-publish-your-google-app-or-youtube-disconnects-every-7-days). Reconnecting without publishing buys another 7 days and no more.
+Google refuses the key outright. In order of likelihood: the key was restricted to **HTTP referrers** rather than IP addresses (every call the plugin makes is server-side, so a referrer restriction rejects all of them); the server's outbound IP isn't in the key's IP allowlist, or has changed; **API restrictions** don't include the YouTube Data API v3; or the key was deleted in the Cloud Console.
+
+None of it recovers by itself and none of it is fixed by re-entering the same key — correct the restriction in the Cloud Console, or paste a new key on the plugin's **YouTube** page.
+
+### YouTube is reading the wrong channel
+
+Almost always a mistyped handle that happens to belong to somebody else. Check the **Channel** field against the channel name and avatar in the Connection Status panel, correct it, and save — the channel is re-resolved whenever the field changes.
 
 ### YouTube quota exhausted
 
-The Data API allows **10,000 units per day per Google Cloud project**, resetting at midnight Pacific Time. A cold fetch of a page of videos costs about 3 units, so normal use is nowhere near it — but the quota is per project, so many sites sharing one set of OAuth credentials share the allowance.
+The Data API allows **10,000 units per day per Google Cloud project**, resetting at midnight Pacific Time. A cold fetch of a page of videos costs about 3 units, so normal use is nowhere near it — but the quota is per project, so many sites sharing one API key share the allowance. Give each site its own Cloud project if that becomes a problem.
 
 When Google returns `quotaExceeded`, the plugin suspends calls until the reset rather than retrying into the same wall every request, and serves stale cache in the meantime. The YouTube page shows the day's count.
 
@@ -742,7 +753,7 @@ Use the **Test Connection** button to verify the API is responding correctly.
 
 The plugin targets Instagram Graph API **v21.0** via `graph.instagram.com`. The version is centralised as a constant (`InstagramProvider::API_VERSION`) and displayed in the Connection Health panel.
 
-YouTube uses **Data API v3** at `googleapis.com/youtube/v3`, which is unversioned beyond that path. Google OAuth endpoints are `accounts.google.com` and `oauth2.googleapis.com`; push notifications come from `pubsubhubbub.appspot.com`; Shorts detection talks to `youtube.com`.
+YouTube uses **Data API v3** at `googleapis.com/youtube/v3`, which is unversioned beyond that path. Push notifications come from `pubsubhubbub.appspot.com`; Shorts detection talks to `youtube.com`. There are no Google OAuth endpoints in the plugin any more.
 
 ---
 

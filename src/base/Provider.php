@@ -66,6 +66,19 @@ abstract class Provider extends Component implements ProviderInterface
         return true;
     }
 
+    /**
+     * Whether this provider authenticates with OAuth.
+     *
+     * A provider returning `false` has no authorisation flow, no tokens to store and
+     * nothing to refresh, so the CP hides the connect button and the token refresh
+     * cron and console command skip it. YouTube reads a public channel with an API
+     * key, which is why this exists.
+     */
+    public static function usesOAuth(): bool
+    {
+        return true;
+    }
+
     // Instance delegates — cheap sugar so callers can work with instances.
     // =========================================================================
 

@@ -33,13 +33,22 @@ class Install extends Migration
             'id' => $this->primaryKey(),
             'siteId' => $this->integer()->notNull(),
             'provider' => $this->string(50)->notNull()->defaultValue('instagram'),
+            // OAuth app credentials, used by Instagram. YouTube authenticates with
+            // an API key instead and leaves both null.
             'appId' => $this->text(),
             'appSecret' => $this->text(),
+            'apiKey' => $this->text(),
             'accessToken' => $this->text(),
-            // Google's refresh token. Instagram has no equivalent — its long-lived
-            // access token is the durable credential — so it stays null there.
+            // Unused. Google's refresh token lived here until YouTube moved to an API
+            // key, and Instagram never had an equivalent — its long-lived access
+            // token is the durable credential.
             'refreshToken' => $this->text(),
+            // The account this connection reads: Instagram's user ID, or YouTube's
+            // resolved `UC…` channel ID.
             'providerUserId' => $this->string(),
+            // What the admin typed into YouTube's channel field, kept so the field can
+            // show it back. `providerUserId` is what calls actually key on.
+            'channelRef' => $this->string(),
             'tokenExpiresAt' => $this->dateTime(),
             'lastFetchAt' => $this->dateTime(),
             'lastError' => $this->text(),

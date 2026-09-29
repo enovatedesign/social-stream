@@ -52,8 +52,13 @@ class ProviderPanel
     public function row(string $handle, string $name, int $siteId, string $siteHandle): array
     {
         $connection = SocialStream::$plugin->token->getConnection($siteId, $handle);
-        $configured = $this->isPresent($connection->appId);
-        $connected = $this->isPresent($connection->accessToken);
+        $provider = SocialStream::$plugin->providers->getProviderByHandle($handle);
+        $usesOAuth = $provider === null || $provider::usesOAuth();
+
+        // Without OAuth there is no token to hold: the key is the configuration and
+        // the resolved channel is the connection.
+        $configured = $this->isPresent($usesOAuth ? $connection->appId : $connection->apiKey);
+        $connected = $this->isPresent($usesOAuth ? $connection->accessToken : $connection->providerUserId);
 
         [$status, $statusLabel] = $this->status($connection, $configured, $connected);
 
@@ -82,9 +87,8 @@ class ProviderPanel
     /**
      * The status dot and its label.
      *
-     * A connection holding a refresh token is reported on the refresh token, not the
-     * access token: YouTube's expires hourly and renews itself, so reporting that as
-     * "expired" would show a red light on a healthy connection every hour.
+     * Expiry only means anything where a credential expires. An API key doesn't, so
+     * those connections stop at "Connected" and never show a token warning.
      *
      * @return array{0: string, 1: string} [status class, label]
      */
@@ -100,10 +104,6 @@ class ProviderPanel
 
         if (!$connected) {
             return ['pending', Craft::t('social-stream', 'Not connected')];
-        }
-
-        if ($this->isPresent($connection->refreshToken)) {
-            return ['active', Craft::t('social-stream', 'Connected')];
         }
 
         $expiresAt = $connection->tokenExpiresAt === null
@@ -174,23 +174,28 @@ class ProviderPanel
 
     /**
      * Everything the YouTube section renders.
+     *
+     * The API key is never sent back to the browser unless it is an environment
+     * variable name, which is not itself a secret — the same rule the app secret
+     * follows.
      */
     public function youtube(int $siteId): array
     {
         $handle = YouTubeProvider::handle();
         $tokenService = SocialStream::$plugin->token;
         $connection = $tokenService->getConnection($siteId, $handle);
-        $accessToken = $tokenService->decrypt($connection->accessToken);
         $provider = SocialStream::$plugin->providers->getProviderByHandle($handle);
+        $apiKey = $tokenService->decrypt($connection->apiKey);
+        $keyIsEnvVar = $apiKey !== null && str_starts_with($apiKey, '$');
 
-        return $this->credentials($siteId, $handle) + [
+        return [
             'connection' => $connection,
-            'hasToken' => $accessToken !== null,
-            'hasRefreshToken' => $this->isPresent($connection->refreshToken),
-            'maskedToken' => $tokenService->maskToken($accessToken),
-            'tokenExpiresAt' => $connection->tokenExpiresAt,
-            'needsReauth' => $connection->needsReauthAt !== null,
+            'apiKey' => $keyIsEnvVar ? $apiKey : null,
+            'apiKeyIsEnvVar' => $keyIsEnvVar,
+            'hasApiKey' => $this->isPresent($connection->apiKey),
+            'channelRef' => $connection->channelRef,
             'channelId' => $connection->providerUserId,
+            'isConnected' => $this->isPresent($connection->providerUserId),
             'websubExpiresAt' => $connection->websubExpiresAt,
             'websubActive' => $this->websubIsActive($connection),
             'webhookLastReceivedAt' => $connection->webhookLastReceivedAt,

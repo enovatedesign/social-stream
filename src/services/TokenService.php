@@ -7,9 +7,7 @@ use craft\base\Component;
 use craft\helpers\App;
 use craft\helpers\DateTimeHelper;
 use DateTime;
-use enovate\socialstream\auth\GoogleTokenClient;
 use enovate\socialstream\providers\InstagramProvider;
-use enovate\socialstream\providers\YouTubeProvider;
 use enovate\socialstream\records\ConnectionRecord;
 use enovate\socialstream\SocialStream;
 use GuzzleHttp\Exception\ClientException;
@@ -18,11 +16,11 @@ use GuzzleHttp\Exception\GuzzleException;
 /**
  * Handles OAuth token exchange, refresh, encryption, and storage.
  *
- * The two providers have opposite credential shapes, which is why several methods
- * here branch on the provider handle: Instagram's durable credential is the
- * 60-day access token itself, refreshed in place before it expires, while Google
- * issues a permanent refresh token plus an access token that lasts an hour and is
- * renewed inline on demand.
+ * Only providers that authenticate with OAuth have anything here — Instagram, whose
+ * durable credential is the 60-day access token itself, refreshed in place before it
+ * expires. A provider declaring {@see \enovate\socialstream\base\Provider::usesOAuth()}
+ * false stores an API key instead, read through {@see getApiKey()}, and is turned
+ * away by the exchange and refresh paths rather than silently doing nothing.
  */
 class TokenService extends Component
 {
@@ -37,15 +35,6 @@ class TokenService extends Component
      * {@see getAccessToken()} renews it inline rather than handing it out.
      */
     public const INLINE_REFRESH_SKEW = 300;
-
-    /**
-     * What to tell an admin whose Google refresh token has stopped working. The
-     * 7-day cadence is the giveaway for an app still in Testing mode, and saying
-     * so here saves the guesswork — see the README.
-     */
-    public const GOOGLE_REAUTH_MESSAGE = 'YouTube refresh token expired or revoked. '
-        . 'Please reconnect your YouTube channel. If this happens every 7 days, your Google app '
-        . 'may be in Testing mode — see the documentation for how to publish it.';
 
     // -------------------------------------------------------------------------
     // Encryption helpers
@@ -104,8 +93,9 @@ class TokenService extends Component
      * Get the decrypted access token for a site.
      *
      * For a connection that holds a refresh token, an access token at or near
-     * expiry is renewed here rather than handed out to fail — YouTube's lasts an
-     * hour, so every provider call would otherwise have to handle expiry itself.
+     * expiry is renewed here rather than handed out to fail. No provider currently
+     * ships one, but the path is kept: it is the only safe way to hand out a
+     * short-lived credential, and removing it would have to be rediscovered.
      */
     public function getAccessToken(int $siteId, string $provider): ?string
     {
@@ -172,10 +162,10 @@ class TokenService extends Component
     /**
      * Renew an access token in the middle of a request, under a lock.
      *
-     * Concurrent requests all arrive at expiry together, and while Google tolerates
-     * several live access tokens, letting every one of them post to the token
-     * endpoint is wasted latency. The loser of the race waits, then re-reads: by
-     * then the winner has usually stored a fresh token and no second call is made.
+     * Concurrent requests all arrive at expiry together, and letting every one of
+     * them post to the token endpoint is wasted latency. The loser of the race waits,
+     * then re-reads: by then the winner has usually stored a fresh token and no
+     * second call is made.
      *
      * @return ConnectionRecord|null The reloaded connection, or null if nothing was refreshed.
      */
@@ -255,6 +245,29 @@ class TokenService extends Component
         return $raw ? App::parseEnv($raw) : null;
     }
 
+    /**
+     * Get the decrypted API key for a connection, resolving env vars.
+     *
+     * The credential for a provider that doesn't use OAuth. It is a secret in the
+     * sense that it spends the project's quota, so it is stored encrypted and is
+     * never handed back to the browser.
+     */
+    public function getApiKey(int $siteId, string $provider): ?string
+    {
+        $record = ConnectionRecord::findOne([
+            'siteId' => $siteId,
+            'provider' => $provider,
+        ]);
+
+        if ($record === null) {
+            return null;
+        }
+
+        $raw = $this->decrypt($record->apiKey);
+
+        return $raw ? App::parseEnv($raw) : null;
+    }
+
     // -------------------------------------------------------------------------
     // OAuth token exchange
     // -------------------------------------------------------------------------
@@ -268,6 +281,10 @@ class TokenService extends Component
      */
     public function exchangeAuthCode(string $code, int $siteId, string $provider = 'instagram'): array
     {
+        if (!$this->usesOAuth($provider)) {
+            return ['success' => false, 'error' => $this->notAnOAuthProvider($provider)];
+        }
+
         $connection = $this->getConnection($siteId, $provider);
         $appId = $this->decrypt($connection->appId);
         $appSecret = $this->decrypt($connection->appSecret);
@@ -275,20 +292,17 @@ class TokenService extends Component
         if (!$appId || !$appSecret) {
             return [
                 'success' => false,
-                'error' => $provider === YouTubeProvider::handle()
-                    ? 'Client ID and Client Secret must be configured before authorising.'
-                    : 'App ID and App Secret must be configured before authorising.',
+                'error' => 'App ID and App Secret must be configured before authorising.',
             ];
         }
 
-        $appId = App::parseEnv($appId);
-        $appSecret = App::parseEnv($appSecret);
-
-        if ($provider === YouTubeProvider::handle()) {
-            return $this->_exchangeGoogleAuthCode($code, $siteId, $connection, $appId, $appSecret);
-        }
-
-        return $this->_exchangeInstagramAuthCode($code, $siteId, $connection, $appId, $appSecret);
+        return $this->_exchangeInstagramAuthCode(
+            $code,
+            $siteId,
+            $connection,
+            App::parseEnv($appId),
+            App::parseEnv($appSecret),
+        );
     }
 
     /**
@@ -332,69 +346,6 @@ class TokenService extends Component
 
         SocialStream::info('Successfully obtained and stored long-lived token for site ' . $siteId);
         return ['success' => true, 'error' => null, 'token' => $result['token']];
-    }
-
-    /**
-     * Google: exchange the code for an access token and a refresh token.
-     *
-     * The channel ID is not fetched here — that is a YouTube Data API call, so it
-     * belongs to the provider, which resolves and stores it on first use exactly as
-     * Instagram's user ID is resolved.
-     *
-     * @return array{success: bool, error: string|null, token?: string}
-     */
-    private function _exchangeGoogleAuthCode(
-        string $code,
-        int $siteId,
-        ConnectionRecord $connection,
-        string $clientId,
-        string $clientSecret,
-    ): array {
-        $result = (new GoogleTokenClient())->exchangeCode(
-            $code,
-            $clientId,
-            $clientSecret,
-            $this->getRedirectUri(),
-        );
-
-        if (!$result['success']) {
-            return ['success' => false, 'error' => $result['error']];
-        }
-
-        // Google only issues a refresh token when it feels like it — on a repeat
-        // authorisation with an existing grant it can return none at all. Keeping
-        // the stored one is the difference between a connection that survives the
-        // next hour and one that silently can't renew.
-        $refreshToken = $result['refreshToken'] !== null
-            ? $this->encrypt($result['refreshToken'])
-            : $connection->refreshToken;
-
-        if ($refreshToken === null) {
-            return [
-                'success' => false,
-                'error' => 'Google returned no refresh token. Revoke the plugin\'s access in your '
-                    . 'Google Account permissions and authorise again.',
-            ];
-        }
-
-        $connection->accessToken = $this->encrypt($result['accessToken']);
-        $connection->refreshToken = $refreshToken;
-        $connection->tokenExpiresAt = $this->expiryFromNow($result['expiresIn'] ?? 3600);
-        $connection->lastError = null;
-        $connection->lastErrorAt = null;
-        $connection->needsReauthAt = null;
-
-        if (!$connection->save()) {
-            SocialStream::error(
-                'Google issued tokens but they could not be saved: ' . json_encode($connection->getErrors())
-            );
-
-            return ['success' => false, 'error' => 'Failed to save token to database.'];
-        }
-
-        SocialStream::info('Stored Google access and refresh tokens for site ' . $siteId);
-
-        return ['success' => true, 'error' => null, 'token' => $result['accessToken']];
     }
 
     /**
@@ -474,20 +425,18 @@ class TokenService extends Component
     // -------------------------------------------------------------------------
 
     /**
-     * Renew the credential a provider expects to be renewed: Instagram's
-     * long-lived access token in place, or a fresh Google access token from the
-     * stored refresh token.
+     * Renew the credential a provider expects to be renewed — Instagram's
+     * long-lived access token, in place.
      *
      * @return array{success: bool, error: string|null}
      */
     public function refreshToken(int $siteId, string $provider): array
     {
-        $connection = $this->getConnection($siteId, $provider);
-
-        if ($provider === YouTubeProvider::handle()) {
-            return $this->_refreshGoogleToken($siteId, $connection);
+        if (!$this->usesOAuth($provider)) {
+            return ['success' => false, 'error' => $this->notAnOAuthProvider($provider)];
         }
 
+        $connection = $this->getConnection($siteId, $provider);
         $currentToken = $this->decrypt($connection->accessToken);
 
         if (!$currentToken) {
@@ -576,75 +525,23 @@ class TokenService extends Component
     }
 
     /**
-     * Trade the stored Google refresh token for a new access token.
-     *
-     * @return array{success: bool, error: string|null}
+     * Whether a provider authenticates with OAuth. An unregistered handle is
+     * assumed to, since that is what every path here was written for.
      */
-    private function _refreshGoogleToken(int $siteId, ConnectionRecord $connection): array
+    private function usesOAuth(string $provider): bool
     {
-        $refreshToken = $this->decrypt($connection->refreshToken);
+        $registered = SocialStream::$plugin->providers->getProviderByHandle($provider);
 
-        if (!$refreshToken) {
-            $error = 'No YouTube refresh token stored for site ' . $siteId
-                . '. Reconnect the channel in the control panel.';
-            $this->recordConnectionError($connection, $error);
+        return $registered === null || $registered::usesOAuth();
+    }
 
-            return ['success' => false, 'error' => $error];
-        }
+    private function notAnOAuthProvider(string $provider): string
+    {
+        $name = SocialStream::$plugin->providers->getProviderByHandle($provider)?->getDisplayName()
+            ?? ucfirst($provider);
 
-        $clientId = $this->getAppId($siteId, YouTubeProvider::handle());
-        $clientSecret = $this->getAppSecret($siteId, YouTubeProvider::handle());
-
-        if (!$clientId || !$clientSecret) {
-            $error = 'Google Client ID and Client Secret must be configured to refresh the YouTube token.';
-            $this->recordConnectionError($connection, $error);
-
-            return ['success' => false, 'error' => $error];
-        }
-
-        $result = (new GoogleTokenClient())->refresh($refreshToken, $clientId, $clientSecret);
-
-        if (!$result['success']) {
-            // A rejected refresh token never recovers — the grant is gone. Clearing
-            // both tokens is what makes the CP show "reconnect" rather than a
-            // connection that looks live and fails every call.
-            if ($result['invalidGrant']) {
-                $connection->accessToken = null;
-                $connection->refreshToken = null;
-                $connection->tokenExpiresAt = null;
-                $connection->needsReauthAt ??= DateTimeHelper::currentUTCDateTime()->format('Y-m-d H:i:s');
-
-                $this->recordConnectionError($connection, self::GOOGLE_REAUTH_MESSAGE);
-                SocialStream::warning(self::GOOGLE_REAUTH_MESSAGE);
-
-                return ['success' => false, 'error' => self::GOOGLE_REAUTH_MESSAGE];
-            }
-
-            $this->recordConnectionError($connection, $result['error']);
-
-            return ['success' => false, 'error' => $result['error']];
-        }
-
-        $connection->accessToken = $this->encrypt($result['accessToken']);
-        $connection->tokenExpiresAt = $this->expiryFromNow($result['expiresIn'] ?? 3600);
-        $connection->lastError = null;
-        $connection->lastErrorAt = null;
-        $connection->needsReauthAt = null;
-
-        if (!$connection->save()) {
-            $error = 'Google issued a refreshed access token but it could not be saved: '
-                . json_encode($connection->getErrors());
-            SocialStream::error($error);
-
-            return ['success' => false, 'error' => $error];
-        }
-
-        SocialStream::info(
-            'Refreshed the YouTube access token for site ' . $siteId
-            . '. Expires ' . $connection->tokenExpiresAt
-        );
-
-        return ['success' => true, 'error' => null];
+        return $name . ' does not use OAuth — it authenticates with an API key, which never expires '
+            . 'and has nothing to refresh.';
     }
 
     /**
@@ -678,10 +575,18 @@ class TokenService extends Component
     /**
      * Refresh tokens for all sites that have a connection.
      *
+     * A provider with no OAuth has nothing to refresh, and reports success rather
+     * than an error: it is called for every registered provider by the cron, and a
+     * red line about YouTube on every run would be noise, not a fault.
+     *
      * @return array{success: bool, results: array}
      */
     public function refreshAllTokens(string $provider): array
     {
+        if (!$this->usesOAuth($provider)) {
+            return ['success' => true, 'results' => []];
+        }
+
         $connections = ConnectionRecord::findAll(['provider' => $provider]);
         $results = [];
         $allSuccess = true;
