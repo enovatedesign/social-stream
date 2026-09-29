@@ -13,6 +13,7 @@
 - `usesExcludeNonFeed()` on `base\Provider` — a provider returning `false` has the option normalised out of its cache keys. `enterRateLimitCooldown()` now takes an optional TTL, for a provider whose limit is a daily quota rather than a rolling window.
 - Config settings `shortsDetection`, `shortsRedirectFallback` and `shortsLookupBudget`.
 - `--provider` on `social-stream/token/refresh`, which previously only ever refreshed Instagram.
+- **Stream Preview tiles now follow the provider.** YouTube posts get a 16:9 tile matching the player rather than Instagram's square, which was cropping the sides off every thumbnail. A Short — or any YouTube thumbnail taller than it is wide — is centred in that tile over a blurred copy of itself instead of being cropped, so portrait and landscape uploads sit in the same grid. Instagram's tile is unchanged.
 
 ### Fixed
 

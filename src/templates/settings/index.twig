@@ -106,7 +106,7 @@
                 <span id="preview-spinner" class="spinner hidden"></span>
             </div>
             <div id="preview-meta" style="margin-bottom: 16px;"></div>
-            <div id="preview-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px;"></div>
+            <div id="preview-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px;"></div>
             <div id="preview-empty"></div>
         </div>
     {% endif %}
@@ -237,12 +237,25 @@
                         return;
                     }
 
+                    // Returns {url, width, height} or null — the dimensions decide
+                    // whether a thumbnail fills its tile or is centred inside it.
                     function pickThumb(p) {
                         var imgs = (p && p.images) || [];
                         var vids = (p && p.videos) || [];
-                        if (imgs.length) return imgs[0].url || imgs[0].thumbnailUrl || '';
-                        if (vids.length) return vids[0].thumbnailUrl || vids[0].url || '';
-                        return '';
+                        var media = null;
+                        var url = '';
+
+                        if (imgs.length) {
+                            media = imgs[0];
+                            url = media.url || media.thumbnailUrl || '';
+                        } else if (vids.length) {
+                            media = vids[0];
+                            url = media.thumbnailUrl || media.url || '';
+                        }
+
+                        if (!url) return null;
+
+                        return { url: url, width: media.width || null, height: media.height || null };
                     }
 
                     posts.forEach(function(post) {
@@ -256,14 +269,34 @@
                         var card = document.createElement('div');
                         card.style.cssText = 'border: 1px solid var(--hairline-color, #e3e5e8); border-radius: 6px; overflow: hidden; background: var(--white);';
 
+                        var type = (post.meta && post.meta.mediaType) || '';
+
+                        // YouTube tiles match the player's 16:9; Instagram keeps the
+                        // square its own grid uses.
+                        var ratio = post.provider === 'youtube' ? '16 / 9' : '1';
+
+                        // Portrait artwork in a 16:9 tile — a Short, or any thumbnail
+                        // taller than it is wide — is centred rather than cropped, over a
+                        // blurred copy of itself so the tile is filled rather than half
+                        // empty. Instagram's square tile keeps cropping, as its own grid
+                        // does.
+                        var portrait = post.provider === 'youtube' && (
+                            type === 'SHORT'
+                            || !!(post.meta && post.meta.isShort)
+                            || !!(thumb && thumb.width && thumb.height && (thumb.width / thumb.height) < 1.2)
+                        );
+
                         var img = '';
                         if (thumb) {
-                            img = '<div style="aspect-ratio: 1; overflow: hidden; background: #f5f5f5;">'
-                                + '<img src="' + Craft.escapeHtml(thumb) + '" style="width: 100%; height: 100%; object-fit: cover;" loading="lazy" />'
+                            var src = Craft.escapeHtml(thumb.url);
+                            img = '<div style="position: relative; aspect-ratio: ' + ratio + '; overflow: hidden; background: #f5f5f5;">'
+                                + (portrait
+                                    ? '<img src="' + src + '" alt="" aria-hidden="true" style="position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; filter: blur(14px); transform: scale(1.15);" loading="lazy" />'
+                                    : '')
+                                + '<img src="' + src + '" style="position: relative; display: block; width: 100%; height: 100%; object-fit: ' + (portrait ? 'contain' : 'cover') + ';" loading="lazy" />'
                                 + '</div>';
                         }
 
-                        var type = (post.meta && post.meta.mediaType) || '';
                         var badge = '';
                         if (type === 'VIDEO') badge = '<span style="background: #5c6ac4; color: #fff; font-size: 11px; padding: 2px 6px; border-radius: 3px;">Video</span> ';
                         else if (type === 'CAROUSEL_ALBUM') badge = '<span style="background: #50b83c; color: #fff; font-size: 11px; padding: 2px 6px; border-radius: 3px;">Carousel</span> ';
