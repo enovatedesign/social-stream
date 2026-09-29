@@ -117,7 +117,7 @@
 
 {{ forms.autosuggestField({
     label: 'API Key' | t('social-stream'),
-    instructions: 'From a Google Cloud project with the YouTube Data API v3 enabled: APIs & Services > Credentials > Create credentials > API key. Restrict it to this server\'s IP address and to the YouTube Data API. Supports environment variables.' | t('social-stream'),
+    instructions: 'From a Google Cloud project with the YouTube Data API v3 enabled: APIs & Services > Credentials > Create credentials > API key. Restrict it to this server\'s IP address (optional) and to the YouTube Data API. Supports environment variables.' | t('social-stream'),
     id: 'apiKey',
     name: 'apiKey',
     value: youtube.apiKeyIsEnvVar ? youtube.apiKey : '',

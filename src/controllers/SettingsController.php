@@ -389,6 +389,19 @@ class SettingsController extends Controller
         $previousChannel = $connection->providerUserId;
 
         if ($provider !== null && !$provider::usesOAuth()) {
+            // The record drops writes to columns that don't exist yet, so saving into
+            // an un-migrated table would discard the key and then report a missing
+            // one. Refuse, and name the actual problem.
+            if (!$connection->hasAttribute('apiKey') || !$connection->hasAttribute('channelRef')) {
+                Craft::$app->session->setError(
+                    Craft::t('social-stream', 'The database is out of date — run `php craft up`, then configure {provider}.', [
+                        'provider' => $provider->getDisplayName(),
+                    ])
+                );
+
+                return null;
+            }
+
             // An empty key field means "leave the stored one alone" — it renders blank
             // for a saved key, so treating blank as a clear would wipe it on
             // every save of the channel field.
