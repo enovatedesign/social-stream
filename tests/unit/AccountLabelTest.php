@@ -8,10 +8,10 @@ use PHPUnit\Framework\TestCase;
 /**
  * Tests how a connected account is named in the control panel.
  *
- * Providers disagree on the key — Instagram returns `username`, YouTube `title` —
- * and getting this wrong is not loud: the CP falls back to a raw provider
+ * Providers disagree on the key — Instagram returns `username`, YouTube `customUrl`
+ * — and getting this wrong is not loud: the CP falls back to a raw provider
  * identifier, so a healthy connection reads as `UCtljUyou0OSIYBc0ajeSgDg` rather
- * than the channel's name.
+ * than the channel's handle.
  */
 class AccountLabelTest extends TestCase
 {
@@ -23,7 +23,26 @@ class AccountLabelTest extends TestCase
         );
     }
 
-    public function testReadsAYouTubeChannelTitle(): void
+    /**
+     * The handle, not the title: it is the closest thing YouTube has to Instagram's
+     * username, and the column it appears in is headed "Account".
+     */
+    public function testReadsAYouTubeHandleInPreferenceToTheChannelTitle(): void
+    {
+        self::assertSame(
+            '@foxesfarmfields',
+            CacheService::accountLabel([
+                'id' => 'UCtljUyou0OSIYBc0ajeSgDg',
+                'title' => 'Foxes Farm Fields',
+                'customUrl' => '@foxesfarmfields',
+            ])
+        );
+    }
+
+    /**
+     * A channel that somehow has no handle still has a name worth showing.
+     */
+    public function testFallsBackToAYouTubeChannelTitle(): void
     {
         self::assertSame(
             'Foxes Farm Fields',
@@ -40,7 +59,12 @@ class AccountLabelTest extends TestCase
     {
         self::assertSame(
             'first',
-            CacheService::accountLabel(['name' => 'third', 'title' => 'second', 'username' => 'first'])
+            CacheService::accountLabel([
+                'name' => 'fourth',
+                'title' => 'third',
+                'customUrl' => 'second',
+                'username' => 'first',
+            ])
         );
     }
 

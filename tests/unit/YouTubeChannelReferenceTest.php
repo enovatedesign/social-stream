@@ -151,6 +151,26 @@ class YouTubeChannelReferenceTest extends TestCase
     }
 
     /**
+     * `snippet.customUrl` is the channel's handle, but the API is inconsistent about
+     * the `@` — older channels come back without it. The CP shows this next to an
+     * Instagram username, so it has to read as a handle either way.
+     */
+    public function testHandlesAreFormattedWithALeadingAtSign(): void
+    {
+        self::assertSame('@foxesfarmfields', ChannelReference::formatHandle('foxesfarmfields'));
+        self::assertSame('@foxesfarmfields', ChannelReference::formatHandle('@foxesfarmfields'));
+        self::assertSame('@foxesfarmfields', ChannelReference::formatHandle('  @foxesfarmfields  '));
+    }
+
+    public function testAMissingHandleFormatsToNothing(): void
+    {
+        self::assertNull(ChannelReference::formatHandle(null));
+        self::assertNull(ChannelReference::formatHandle(''));
+        self::assertNull(ChannelReference::formatHandle('   '));
+        self::assertNull(ChannelReference::formatHandle('@'));
+    }
+
+    /**
      * A channel ID is the only identifier that never changes, so it is what gets
      * stored — but the field has to show the admin something they recognise.
      */

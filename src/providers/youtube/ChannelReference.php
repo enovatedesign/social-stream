@@ -87,6 +87,20 @@ class ChannelReference
     }
 
     /**
+     * Present a channel's `snippet.customUrl` as a handle.
+     *
+     * The Data API is inconsistent about the `@`: newer channels return
+     * `@foxesfarmfields`, older ones just `foxesfarmfields`. The CP shows this where
+     * an Instagram username goes, so it is normalised to read as a handle either way.
+     */
+    public static function formatHandle(?string $customUrl): ?string
+    {
+        $handle = ltrim(trim((string) $customUrl), '@');
+
+        return $handle === '' ? null : '@' . $handle;
+    }
+
+    /**
      * Parse a URL, which may arrive without a scheme.
      *
      * @return array{type: string, value: string}|null

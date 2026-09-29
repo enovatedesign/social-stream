@@ -128,6 +128,12 @@ class AuthController extends Controller
             return $this->redirect($this->_settingsUrl($siteId));
         }
 
+        // Name the account now, while the admin is here. The CP never fetches a
+        // profile itself — opening a settings page must not spend a provider's quota —
+        // so without this the Providers table would identify a healthy connection by
+        // its raw numeric ID until something else happened to fetch one.
+        SocialStream::$plugin->providers->requireProviderByHandle($provider)->fetchProfile($siteId);
+
         Craft::$app->session->setNotice(
             Craft::t('social-stream', '{provider} account connected successfully.', ['provider' => $name])
         );

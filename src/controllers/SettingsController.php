@@ -534,7 +534,7 @@ class SettingsController extends Controller
 
     /**
      * Finish a YouTube connection once a channel is stored: clear anything cached
-     * against the previous channel and start push notifications.
+     * against the previous channel, name it, and start push notifications.
      *
      * Push notifications are an optimisation on top of the refresh cron, so a hub
      * that refuses the subscription must not fail the save — it is reported in the
@@ -543,6 +543,12 @@ class SettingsController extends Controller
     private function connectYouTube(YouTubeProvider $provider, int $siteId): void
     {
         SocialStream::$plugin->streamCache->invalidateForSiteAndProvider($siteId, $provider->getHandle());
+
+        // Name the channel now, while an admin is watching. The CP never fetches a
+        // profile itself — opening a settings page must not spend quota — so without
+        // this the panel and the Providers table would identify a perfectly healthy
+        // connection by its raw `UC…` ID until something else happened to fetch one.
+        $provider->fetchProfile($siteId);
 
         $subscription = $provider->subscribeWebSub($siteId);
 

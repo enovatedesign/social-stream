@@ -14,29 +14,28 @@
                         {{ 'Connected' | t('social-stream') }}
                     </td>
                 </tr>
-                {% if youtube.profile %}
-                    <tr>
-                        <th>{{ 'Channel' | t('social-stream') }}</th>
-                        <td>
+                <tr>
+                    <th>{{ 'Channel' | t('social-stream') }}</th>
+                    <td>
+                        {% if youtube.profile %}
                             {% if youtube.profile.thumbnailUrl %}
                                 <img src="{{ youtube.profile.thumbnailUrl }}" alt="" width="24" height="24" style="border-radius: 50%; vertical-align: middle; margin-right: 6px;">
                             {% endif %}
-                            {{ youtube.profile.title }}
                             {% if youtube.profile.customUrl %}
-                                <span class="light"> · {{ youtube.profile.customUrl }}</span>
+                                <strong>{{ youtube.profile.customUrl }}</strong>
+                                <span class="light"> · {{ youtube.profile.title }}</span>
+                            {% else %}
+                                <strong>{{ youtube.profile.title }}</strong>
                             {% endif %}
                             {% if youtube.profile.subscriberCount is not null and not youtube.profile.hiddenSubscriberCount %}
                                 <span class="light"> · {{ youtube.profile.subscriberCount | number_format }} {{ 'subscribers' | t('social-stream') }}</span>
                             {% endif %}
-                        </td>
-                    </tr>
-                {% endif %}
-                <tr>
-                    <th>{{ 'Channel ID' | t('social-stream') }}</th>
-                    <td>
-                        <code>{{ youtube.channelId }}</code>
+                        {% else %}
+                            <strong>{{ youtube.channelRef }}</strong>
+                        {% endif %}
                         <div class="light" style="margin-top: 4px; font-size: 12px;">
-                            {{ 'Resolved once from the channel below. Every request uses this ID, so renaming the channel or its handle won\'t break the feed.' | t('social-stream') }}
+                            <code>{{ youtube.channelId }}</code> —
+                            {{ 'the ID every request uses, resolved once from the channel below. Renaming the channel or its handle won\'t break the feed.' | t('social-stream') }}
                         </div>
                     </td>
                 </tr>

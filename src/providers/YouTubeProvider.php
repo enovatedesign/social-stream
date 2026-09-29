@@ -271,7 +271,9 @@ class YouTubeProvider extends Provider
                 'id' => $channel['id'] ?? null,
                 'title' => $snippet['title'] ?? null,
                 'description' => $snippet['description'] ?? null,
-                'customUrl' => $snippet['customUrl'] ?? null,
+                // The API returns this with or without the `@` depending on the
+                // channel's age; the CP shows it where an Instagram username goes.
+                'customUrl' => ChannelReference::formatHandle($snippet['customUrl'] ?? null),
                 'thumbnailUrl' => $thumbnail?->url,
                 // Google rounds subscriber counts publicly and hides them entirely
                 // when the owner asks, hence the null rather than a zero.

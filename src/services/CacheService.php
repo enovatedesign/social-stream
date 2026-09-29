@@ -183,13 +183,16 @@ class CacheService extends Component
     /**
      * Pull a display name out of a profile response.
      *
-     * Providers disagree on the key — Instagram says `username`, YouTube says `title`
-     * — and a provider from another plugin may use neither, in which case there is
-     * simply no name to show.
+     * Providers disagree on the key — Instagram says `username`, YouTube says
+     * `customUrl` — and a provider from another plugin may use neither, in which case
+     * there is simply no name to show.
+     *
+     * Handles come before titles: the label stands in the CP's "Account" column, and
+     * `@foxesfarmfields` identifies an account in a way a display name does not.
      */
     public static function accountLabel(?array $profile): ?string
     {
-        foreach (['username', 'title', 'name'] as $key) {
+        foreach (['username', 'customUrl', 'title', 'name'] as $key) {
             $value = $profile[$key] ?? null;
 
             if (is_string($value) && $value !== '') {
