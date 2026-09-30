@@ -32,6 +32,12 @@ use yii\web\Response;
 class SettingsController extends Controller
 {
     /**
+     * Whether this request failed to resolve the channel it was given, so the save
+     * can decline to also report success. Set by {@see applyChannel()}.
+     */
+    private bool $channelError = false;
+
+    /**
      * The Providers table, plus the settings that apply across all of them.
      */
     public function actionIndex(?string $siteHandle = null): Response
@@ -387,6 +393,7 @@ class SettingsController extends Controller
         $tokenService = SocialStream::$plugin->token;
         $connection = $tokenService->getConnection($siteId, $handle);
         $previousChannel = $connection->providerUserId;
+        $this->channelError = false;
 
         if ($provider !== null && !$provider::usesOAuth()) {
             // The record drops writes to columns that don't exist yet, so saving into
@@ -442,8 +449,10 @@ class SettingsController extends Controller
         }
 
         // A channel that failed to resolve has already flashed its own error, and
-        // "Settings saved" on top of it reads as though it worked.
-        if (Craft::$app->session->getFlash('error') === null) {
+        // "Settings saved" on top of it reads as though it worked. Tracked on the
+        // request rather than read back from the session, which would also pick up an
+        // unrelated error left over from the request before this one.
+        if (!$this->channelError) {
             Craft::$app->session->setNotice(Craft::t('social-stream', 'Settings saved.'));
         }
 
@@ -498,6 +507,7 @@ class SettingsController extends Controller
         if (!$apiKey) {
             $message = Craft::t('social-stream', 'Enter an API key as well — the channel can\'t be looked up without one.');
             Craft::$app->session->setError($message);
+            $this->channelError = true;
             $connection->lastError = $message;
             $connection->lastErrorAt = DateTimeHelper::currentUTCDateTime()->format('Y-m-d H:i:s');
 
@@ -508,6 +518,7 @@ class SettingsController extends Controller
 
         if ($resolved['id'] === null) {
             Craft::$app->session->setError($resolved['error']);
+            $this->channelError = true;
 
             // The provider records its own errors against a separately loaded copy of
             // this row, and the save that follows would overwrite it — so the failure
@@ -548,7 +559,14 @@ class SettingsController extends Controller
         // profile itself — opening a settings page must not spend quota — so without
         // this the panel and the Providers table would identify a perfectly healthy
         // connection by its raw `UC…` ID until something else happened to fetch one.
-        $provider->fetchProfile($siteId);
+        //
+        // fetchProfile() remembers the account's name but does not cache the response,
+        // so the panel's avatar, handle and subscriber count need the second step.
+        $profile = $provider->fetchProfile($siteId);
+
+        if ($profile['success'] ?? false) {
+            SocialStream::$plugin->streamCache->setProfile($siteId, $profile, $provider->getHandle());
+        }
 
         $subscription = $provider->subscribeWebSub($siteId);
 

@@ -128,11 +128,7 @@ class AuthController extends Controller
             return $this->redirect($this->_settingsUrl($siteId));
         }
 
-        // Name the account now, while the admin is here. The CP never fetches a
-        // profile itself — opening a settings page must not spend a provider's quota —
-        // so without this the Providers table would identify a healthy connection by
-        // its raw numeric ID until something else happened to fetch one.
-        SocialStream::$plugin->providers->requireProviderByHandle($provider)->fetchProfile($siteId);
+        $this->_cacheProfile($siteId, $provider);
 
         Craft::$app->session->setNotice(
             Craft::t('social-stream', '{provider} account connected successfully.', ['provider' => $name])
@@ -226,6 +222,33 @@ class AuthController extends Controller
         return SocialStream::$plugin->providers->getProviderByHandle($handle) === null
             ? InstagramProvider::handle()
             : $handle;
+    }
+
+    /**
+     * Name the account now, while the admin is here.
+     *
+     * The CP never fetches a profile itself — opening a settings page must not spend a
+     * provider's quota — so without this the Providers table would identify a healthy
+     * connection by its raw numeric ID, and the provider's own panel would show no
+     * avatar or username, until something else happened to fetch one.
+     *
+     * Never fatal. The tokens are already stored and validated by this point, so a
+     * failure here must not turn a connection that worked into an error page the
+     * admin will respond to by connecting again.
+     */
+    private function _cacheProfile(int $siteId, string $provider): void
+    {
+        try {
+            $result = SocialStream::$plugin->providers->requireProviderByHandle($provider)->fetchProfile($siteId);
+
+            // fetchProfile() remembers the account's name but does not cache the
+            // response, so the panel's avatar and username need this second step.
+            if ($result['success'] ?? false) {
+                SocialStream::$plugin->streamCache->setProfile($siteId, $result, $provider);
+            }
+        } catch (\Throwable $e) {
+            SocialStream::error('Could not read the profile after connecting: ' . $e->getMessage());
+        }
     }
 
     /**
