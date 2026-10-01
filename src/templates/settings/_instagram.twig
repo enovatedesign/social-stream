@@ -7,8 +7,8 @@
             <p style="margin: 0; color: var(--ui-danger-text-color, #c00);">
                 <strong>{{ 'Instagram has rejected this token' | t('social-stream') }}</strong> —
                 {{ 'stream requests are suspended until the connection is re-authorised.' | t('social-stream') }}
-                {% if instagram.connection.needsReauthAt %}
-                    <span class="light">{{ 'Rejected since {date}' | t('social-stream', { date: instagram.connection.needsReauthAt | date('j M Y, g:ia') }) }}</span>
+                {% if instagram.needsReauthAt %}
+                    <span class="light">{{ 'Rejected since {date}' | t('social-stream', { date: instagram.needsReauthAt | date('j M Y, g:ia') }) }}</span>
                 {% endif %}
             </p>
         </div>
@@ -22,7 +22,13 @@
     {% elseif instagram.isExpiringSoon %}
         <div class="pane" style="background: var(--ui-warning-bg-color, #fff3cd); padding: 12px 16px; margin-bottom: 24px; border-radius: 4px;">
             <p style="margin: 0; color: var(--ui-warning-text-color, #856404);">
-                <strong>{{ 'Token expires {date}' | t('social-stream', { date: instagram.connection.tokenExpiresAt }) }}</strong> —
+                <strong>
+                    {%- if instagram.tokenExpiresAt -%}
+                        {{ 'Token expires {date}' | t('social-stream', { date: instagram.tokenExpiresAt | date('j M Y, g:ia') }) }}
+                    {%- else -%}
+                        {{ 'Token expires soon' | t('social-stream') }}
+                    {%- endif -%}
+                </strong> —
                 {{ 'consider refreshing the token soon.' | t('social-stream') }}
             </p>
         </div>
@@ -65,16 +71,16 @@
                     <th>{{ 'Access Token' | t('social-stream') }}</th>
                     <td><code>{{ instagram.maskedToken }}</code></td>
                 </tr>
-                {% if instagram.connection.tokenExpiresAt %}
+                {% if instagram.tokenExpiresAt %}
                     <tr>
                         <th>{{ 'Token Expiry' | t('social-stream') }}</th>
-                        <td>{{ instagram.connection.tokenExpiresAt | date('j M Y, g:ia') }}</td>
+                        <td>{{ instagram.tokenExpiresAt | date('j M Y, g:ia') }}</td>
                     </tr>
                 {% endif %}
-                {% if instagram.connection.lastFetchAt %}
+                {% if instagram.lastFetchAt %}
                     <tr>
                         <th>{{ 'Last Successful Fetch' | t('social-stream') }}</th>
-                        <td>{{ instagram.connection.lastFetchAt | date('j M Y, g:ia') }}</td>
+                        <td>{{ instagram.lastFetchAt | date('j M Y, g:ia') }}</td>
                     </tr>
                 {% endif %}
                 {% if instagram.connection.lastError %}
@@ -82,8 +88,8 @@
                         <th>{{ 'Last Error' | t('social-stream') }}</th>
                         <td>
                             <span style="color: var(--ui-danger-text-color, #c00);">{{ instagram.connection.lastError }}</span>
-                            {% if instagram.connection.lastErrorAt %}
-                                <span class="light"> · {{ instagram.connection.lastErrorAt | date('j M Y, g:ia') }}</span>
+                            {% if instagram.lastErrorAt %}
+                                <span class="light"> · {{ instagram.lastErrorAt | date('j M Y, g:ia') }}</span>
                             {% endif %}
                         </td>
                     </tr>
@@ -136,8 +142,8 @@
             <p style="margin: 0;">
                 <span class="status {{ (instagram.isExpired or instagram.needsReauth) ? 'off' : (instagram.isExpiringSoon ? 'pending' : 'active') }}"></span>
                 {{ 'Connected' | t('social-stream') }} — <code>{{ instagram.maskedToken }}</code>
-                {% if instagram.connection.tokenExpiresAt %}
-                    <span class="light"> · {{ 'Token expires {date}' | t('social-stream', { date: instagram.connection.tokenExpiresAt | date('j M Y') }) }}</span>
+                {% if instagram.tokenExpiresAt %}
+                    <span class="light"> · {{ 'Token expires {date}' | t('social-stream', { date: instagram.tokenExpiresAt | date('j M Y') }) }}</span>
                 {% endif %}
             </p>
         </div>

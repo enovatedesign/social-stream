@@ -88,19 +88,31 @@
     {% if previewProviders | length %}
         <div id="preview" class="hidden">
             <div style="margin-bottom: 16px;">
+                {# Deliberately unnamed, both of them. The preview is an AJAX call that
+                   reads this value in JS, so it is never submitted — and a *named*
+                   control inside the page's form counts towards the serialised value
+                   Craft snapshots to detect unsaved changes. Naming it made picking a
+                   provider look like an edit, so leaving the page asked the browser's
+                   "Leave site?" question over a choice there is nothing to save. #}
                 {% if previewProviders | length > 1 %}
                     <span style="display: inline-block; margin-right: 8px;">
                         {{ forms.select({
                             id: 'preview-provider',
-                            name: 'previewProvider',
                             options: previewProviders | map(p => {
                                 label: p.account ? p.name ~ ' — ' ~ p.account : p.name,
                                 value: p.handle,
                             }),
+                            inputAttributes: {
+                                aria: { label: 'Provider to preview' | t('social-stream') },
+                            },
                         }) }}
                     </span>
                 {% else %}
-                    {{ hiddenInput('previewProvider', previewProviders[0].handle, { id: 'preview-provider' }) }}
+                    {{ tag('input', {
+                        type: 'hidden',
+                        id: 'preview-provider',
+                        value: previewProviders[0].handle,
+                    }) }}
                 {% endif %}
                 <button type="button" id="load-preview-btn" class="btn submit">{{ 'Load Stream Preview' | t('social-stream') }}</button>
                 <span id="preview-spinner" class="spinner hidden"></span>

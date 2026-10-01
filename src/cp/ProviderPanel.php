@@ -5,7 +5,9 @@ namespace enovate\socialstream\cp;
 use Craft;
 use craft\helpers\DateTimeHelper;
 use DateTime;
+use DateTimeImmutable;
 use craft\helpers\UrlHelper;
+use enovate\socialstream\helpers\DisplayDate;
 use enovate\socialstream\providers\InstagramProvider;
 use enovate\socialstream\providers\youtube\QuotaMeter;
 use enovate\socialstream\providers\youtube\WebSubSubscriber;
@@ -48,7 +50,7 @@ class ProviderPanel
     }
 
     /**
-     * @return array{handle: string, name: string, configured: bool, connected: bool, status: string, statusLabel: string, account: string|null, lastFetchAt: string|null, lastError: string|null, lastErrorAt: string|null, actionLabel: string, url: string}
+     * @return array{handle: string, name: string, configured: bool, connected: bool, status: string, statusLabel: string, account: string|null, lastFetchAt: DateTimeImmutable|null, lastError: string|null, lastErrorAt: DateTimeImmutable|null, actionLabel: string, url: string}
      */
     public function row(string $handle, string $name, int $siteId, string $siteHandle): array
     {
@@ -71,9 +73,9 @@ class ProviderPanel
             'status' => $status,
             'statusLabel' => $statusLabel,
             'account' => $this->account($siteId, $handle, $connection->providerUserId),
-            'lastFetchAt' => $connection->lastFetchAt,
+            'lastFetchAt' => $this->displayDate($connection->lastFetchAt),
             'lastError' => $connection->lastError,
-            'lastErrorAt' => $connection->lastErrorAt,
+            'lastErrorAt' => $this->displayDate($connection->lastErrorAt),
             // "Connect" is the honest label while there is nothing to configure yet,
             // and it is the action an admin is actually looking for.
             'actionLabel' => $connected
@@ -162,6 +164,10 @@ class ProviderPanel
 
         return $this->credentials($siteId, $handle) + [
             'connection' => $connection,
+            'lastFetchAt' => $this->displayDate($connection->lastFetchAt),
+            'lastErrorAt' => $this->displayDate($connection->lastErrorAt),
+            'tokenExpiresAt' => $this->displayDate($connection->tokenExpiresAt),
+            'needsReauthAt' => $this->displayDate($connection->needsReauthAt),
             'hasToken' => $accessToken !== null,
             'maskedToken' => $tokenService->maskToken($accessToken),
             'isExpiringSoon' => $tokenService->isTokenExpiringSoon($siteId, $handle),
@@ -191,16 +197,18 @@ class ProviderPanel
 
         return [
             'connection' => $connection,
+            'lastFetchAt' => $this->displayDate($connection->lastFetchAt),
+            'lastErrorAt' => $this->displayDate($connection->lastErrorAt),
             'apiKey' => $keyIsEnvVar ? $apiKey : null,
             'apiKeyIsEnvVar' => $keyIsEnvVar,
             'hasApiKey' => $this->isPresent($connection->apiKey),
             'channelRef' => $connection->channelRef,
             'channelId' => $connection->providerUserId,
             'isConnected' => $this->isPresent($connection->providerUserId),
-            'websubExpiresAt' => $connection->websubExpiresAt,
+            'websubExpiresAt' => $this->displayDate($connection->websubExpiresAt),
             'websubActive' => $this->websubIsActive($connection),
             'websubPending' => WebSubSubscriber::isPending($siteId),
-            'webhookLastReceivedAt' => $connection->webhookLastReceivedAt,
+            'webhookLastReceivedAt' => $this->displayDate($connection->webhookLastReceivedAt),
             'webhookCallbackUrl' => $provider instanceof YouTubeProvider
                 ? $provider->websubCallbackUrl()
                 : null,
@@ -209,6 +217,17 @@ class ProviderPanel
             'quotaLimit' => QuotaMeter::DAILY_LIMIT,
             'profile' => $this->cachedProfile($siteId, $handle),
         ];
+    }
+
+    /**
+     * A stored UTC timestamp, ready for a template to format.
+     *
+     * The control panel shows every other date in the site's configured timezone, so
+     * these follow it rather than the server's.
+     */
+    private function displayDate(?string $storedUtc): ?DateTimeImmutable
+    {
+        return DisplayDate::fromStoredUtc($storedUtc, Craft::$app->getTimeZone());
     }
 
     /**
