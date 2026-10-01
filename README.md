@@ -777,10 +777,11 @@ Event::on(
 );
 ```
 
-Your provider should extend `enovate\socialstream\base\Provider`, implementing `handle()`, `doFetchStream()`, and `doFetchProfile()`. Optionally override `displayName()` to supply a human-readable name. The base class handles rate-limit state, error recording, last-fetch timestamps, and lifecycle events.
+Your provider should extend `enovate\socialstream\base\Provider`, implementing `handle()`, `doFetchStream()`, and `doFetchProfile()`. Extending the base class is the supported route rather than implementing `base\ProviderInterface` yourself — the interface includes the two static hooks below, which the base class answers for you. Optionally override `displayName()` to supply a human-readable name. The base class handles rate-limit state, error recording, last-fetch timestamps, and lifecycle events.
 
-Two optional hooks are worth knowing about:
+Three optional hooks are worth knowing about:
 
+- `usesOAuth()` — return `false` if your provider authenticates with something other than OAuth, as YouTube's API key does. There is then no authorisation flow, no token to store and nothing to refresh, so the control panel hides the connect button and the token refresh cron and console command skip your provider instead of reporting a failure once a run. Defaults to `true`.
 - `usesExcludeNonFeed()` — return `false` if the `excludeNonFeed` option means nothing to your provider, as YouTube's does. The option is then normalised out of your cache keys instead of splitting one stream across two identical entries. Defaults to `true`, which preserves the existing key shape for any provider that doesn't override it.
 - `enterRateLimitCooldown($siteId, $ttl)` — pass a `$ttl` when your provider's limit is a daily quota rather than a rolling window, so calls are suppressed until it actually resets. Omit it for the default 15 minutes.
 

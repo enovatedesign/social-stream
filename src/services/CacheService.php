@@ -6,6 +6,7 @@ use Craft;
 use craft\base\Component;
 use craft\helpers\Json;
 use enovate\socialstream\base\Provider;
+use enovate\socialstream\base\ProviderInterface;
 use enovate\socialstream\models\Post;
 use enovate\socialstream\records\SettingsRecord;
 use enovate\socialstream\SocialStream;
@@ -364,6 +365,11 @@ class CacheService extends Component
      * An unregistered or unknown handle is assumed to use it: that is the
      * pre-existing key shape, and guessing otherwise would silently change the keys
      * of a third-party provider.
+     *
+     * Only a missing provider is guessed at now. This used to also guess for anything
+     * that wasn't a {@see Provider} subclass, because the method was declared there
+     * rather than on the contract — it is on {@see ProviderInterface} now, so every
+     * registered provider answers for itself.
      */
     private function _providerUsesExcludeNonFeed(string $provider): bool
     {
@@ -373,7 +379,7 @@ class CacheService extends Component
 
         $instance = SocialStream::$plugin->providers->getProviderByHandle($provider);
 
-        return !($instance instanceof Provider) || $instance::usesExcludeNonFeed();
+        return $instance === null || $instance::usesExcludeNonFeed();
     }
 
     private function _cacheDependency(): \yii\caching\TagDependency
