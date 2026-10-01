@@ -87,8 +87,8 @@ class WebSubController extends Controller
         foreach ($connections as $connection) {
             $siteId = (int) $connection->siteId;
 
-            if (!$connection->accessToken) {
-                $this->stdout("  Site {$siteId}: not connected — skipped." . PHP_EOL);
+            if (!$this->hasChannel($connection)) {
+                $this->stdout("  Site {$siteId}: no channel configured — skipped." . PHP_EOL);
                 continue;
             }
 
@@ -113,6 +113,27 @@ class WebSubController extends Controller
         $this->stdout("Done. {$renewed} renewed, {$failed} failed." . PHP_EOL);
 
         return $failed > 0 ? ExitCode::UNSPECIFIED_ERROR : ExitCode::OK;
+    }
+
+    /**
+     * Whether there is a channel here to subscribe to.
+     *
+     * This used to test `accessToken` — a column no YouTube connection has ever had.
+     * It is written only by Instagram's two OAuth paths, because YouTube reads a
+     * public channel with an API key. Every connection therefore reported "not
+     * connected" and was skipped before the lease was even looked at, so the command
+     * renewed nothing: the 10-day lease it exists to extend simply expired, and push
+     * notifications stopped until something else re-subscribed. `--force` didn't help
+     * either, because this ran ahead of {@see self::needsRenewal()}.
+     *
+     * A stored channel ID is the settled case. A reference not yet resolved into one
+     * is still worth attempting, because {@see YouTubeProvider::subscribeWebSub()}
+     * resolves it — and reports its own error if it cannot.
+     */
+    private function hasChannel(ConnectionRecord $connection): bool
+    {
+        return ($connection->providerUserId ?? '') !== ''
+            || ($connection->channelRef ?? '') !== '';
     }
 
     /**
