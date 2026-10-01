@@ -43,6 +43,16 @@ class WebSubSubscriber
     private const PENDING_TTL = 120;
 
     /**
+     * How long an unsubscribe stays confirmable after the hub was asked for it.
+     *
+     * The hub verifies out of band, and a disconnect clears the channel ID that
+     * verification is matched on — so the request itself is what the callback is
+     * checked against. Ten minutes is far longer than the seconds a callback takes,
+     * and the window only ever permits cancelling a subscription.
+     */
+    private const UNSUBSCRIBING_TTL = 600;
+
+    /**
      * Whether a subscribe request is still waiting on the hub's verification call.
      */
     public static function isPending(int $siteId): bool
@@ -61,6 +71,40 @@ class WebSubSubscriber
     private static function pendingCacheKey(int $siteId): string
     {
         return 'social-stream:websub-pending:' . $siteId;
+    }
+
+    /**
+     * Remember that this install asked the hub to cancel a channel's subscription.
+     *
+     * Recorded against the channel rather than the site because that is all the hub's
+     * verification call carries, and it is deliberately set before the request: the
+     * hub may verify synchronously, and a callback arriving first would otherwise
+     * find no record of what it is confirming.
+     */
+    public static function markUnsubscribing(string $channelId): void
+    {
+        Craft::$app->cache->set(self::unsubscribingCacheKey($channelId), true, self::UNSUBSCRIBING_TTL);
+    }
+
+    /**
+     * Whether this install asked the hub to cancel this channel's subscription.
+     */
+    public static function isUnsubscribing(string $channelId): bool
+    {
+        return Craft::$app->cache->get(self::unsubscribingCacheKey($channelId)) !== false;
+    }
+
+    /**
+     * Forget the request — the hub has confirmed it, or it never reached the hub.
+     */
+    public static function clearUnsubscribing(string $channelId): void
+    {
+        Craft::$app->cache->delete(self::unsubscribingCacheKey($channelId));
+    }
+
+    private static function unsubscribingCacheKey(string $channelId): string
+    {
+        return 'social-stream:websub-unsubscribing:' . $channelId;
     }
 
     /**
@@ -123,6 +167,14 @@ class WebSubSubscriber
             return ['success' => false, 'error' => 'Could not store the WebSub secret for this channel.'];
         }
 
+        if ($mode === 'unsubscribe') {
+            // Before the request, not after: the disconnect that triggers this clears
+            // the channel ID the hub's verification call is matched on, so without a
+            // record of having asked, that call is rejected as an unknown topic — and
+            // the hub takes a rejected verification to mean the subscription stands.
+            self::markUnsubscribing($channelId);
+        }
+
         try {
             $client = Craft::createGuzzleClient();
             $response = $client->post(self::HUB_URL, [
@@ -141,6 +193,10 @@ class WebSubSubscriber
             // The hub answers 202 and then calls back to verify; 204 means it verified
             // synchronously. Anything else is a refusal.
             if ($status !== 202 && $status !== 204) {
+                if ($mode === 'unsubscribe') {
+                    self::clearUnsubscribing($channelId);
+                }
+
                 return [
                     'success' => false,
                     'error' => 'The WebSub hub returned HTTP ' . $status . ' for ' . $mode . '.',
@@ -166,6 +222,11 @@ class WebSubSubscriber
 
             return ['success' => true, 'error' => null];
         } catch (GuzzleException $e) {
+            if ($mode === 'unsubscribe') {
+                // Nothing reached the hub, so nothing will call back to confirm it.
+                self::clearUnsubscribing($channelId);
+            }
+
             return ['success' => false, 'error' => 'WebSub ' . $mode . ' failed: ' . $e->getMessage()];
         }
     }

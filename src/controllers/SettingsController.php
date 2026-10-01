@@ -228,6 +228,12 @@ class SettingsController extends Controller
             ]);
         }
 
+        // A subscription recovered through this button needs the same renewal chain a
+        // freshly connected channel gets, or it lapses after one lease and the button
+        // has to be found again. Deduped, so the chain an existing lease already has
+        // is not doubled.
+        RenewWebSubJob::pushRenewal($siteId);
+
         // The hub answers immediately but verifies out of band, so the lease is not
         // confirmed yet — saying so is more honest than reporting success outright.
         return $this->asJson([
@@ -437,6 +443,21 @@ class SettingsController extends Controller
             return null;
         }
 
+        // A channel this site has stopped watching has to be handed back, or the hub
+        // keeps its lease for up to ten days and keeps pushing uploads from a channel
+        // the site no longer serves. Covers a channel cleared as well as one replaced.
+        //
+        // Before subscribing the new one, deliberately: the unsubscribe clears this
+        // connection's stored lease, and run afterwards it would discard the lease the
+        // new subscription had just been granted.
+        if (
+            $provider instanceof YouTubeProvider
+            && $previousChannel !== null
+            && $previousChannel !== $connection->providerUserId
+        ) {
+            $this->disconnectChannel($provider, $siteId, $previousChannel);
+        }
+
         // Only when the channel actually changed: re-subscribing and dropping the
         // cache on every unrelated save would cost a hub round trip and a cold fetch
         // for nothing.
@@ -540,6 +561,28 @@ class SettingsController extends Controller
 
         if ($provider instanceof YouTubeProvider) {
             $provider->forgetChannel((int) $connection->siteId);
+        }
+    }
+
+    /**
+     * Hand a channel this site has stopped watching back to the hub.
+     *
+     * Push notifications are an optimisation on top of the refresh cron, so a hub that
+     * refuses must not fail the save — but an abandoned subscription is not harmless
+     * either: it keeps delivering for up to ten days, so the failure is logged rather
+     * than dropped.
+     */
+    private function disconnectChannel(YouTubeProvider $provider, int $siteId, string $channelId): void
+    {
+        $result = $provider->unsubscribeChannel($siteId, $channelId);
+
+        if (!$result['success']) {
+            SocialStream::warning(
+                'Stopped watching YouTube channel ' . $channelId . ' for site ' . $siteId
+                . ' but the hub would not cancel the subscription: '
+                . ($result['error'] ?? 'unknown error')
+                . '. It will keep delivering until the lease expires.'
+            );
         }
     }
 

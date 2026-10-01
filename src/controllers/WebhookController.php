@@ -68,6 +68,30 @@ class WebhookController extends Controller
         $connections = $channelId === null ? [] : $this->connectionsForChannel($channelId);
 
         if ($connections === []) {
+            // Disconnecting clears the channel ID a verification is matched on, and the
+            // hub calls back seconds later — so an unsubscribe this install asked for is
+            // confirmed against the record of the request instead. Rejecting it left the
+            // hub believing the subscription stood, still pushing notifications about a
+            // feed the site no longer serves.
+            //
+            // Safe to confirm without a connection: echoing the challenge can only ever
+            // cancel a subscription, never create one.
+            if (
+                $mode === 'unsubscribe'
+                && $challenge !== null
+                && $channelId !== null
+                && WebSubSubscriber::isUnsubscribing($channelId)
+            ) {
+                WebSubSubscriber::clearUnsubscribing($channelId);
+
+                SocialStream::info(
+                    'WebSub unsubscribe verified for channel ' . $channelId
+                    . ' after its connection had already been cleared.'
+                );
+
+                return $this->plainText($challenge);
+            }
+
             SocialStream::warning(
                 'Rejected a WebSub verification for an unknown topic: ' . ($topic ?? '(none)')
             );
@@ -106,6 +130,10 @@ class WebhookController extends Controller
             $connection->websubExpiresAt = $expiresAt;
             $connection->save();
             WebSubSubscriber::clearPending((int) $connection->siteId);
+        }
+
+        if ($mode === 'unsubscribe' && $channelId !== null) {
+            WebSubSubscriber::clearUnsubscribing($channelId);
         }
 
         SocialStream::info(

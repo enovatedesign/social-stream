@@ -612,6 +612,22 @@ class YouTubeProvider extends Provider
             return ['success' => false, 'error' => 'No connected YouTube channel to unsubscribe.'];
         }
 
+        return $this->unsubscribeChannel($siteId, $channelId);
+    }
+
+    /**
+     * Stop notifications for a named channel this site has stopped watching.
+     *
+     * Takes the channel rather than reading it off the connection, because by the time
+     * this matters the connection has moved on: changing the channel stores the new ID
+     * before anything can be said about the old one, and the hub would otherwise keep
+     * the old lease — and keep pushing uploads from a channel the site no longer
+     * serves — for up to ten days.
+     *
+     * @return array{success: bool, error: string|null}
+     */
+    public function unsubscribeChannel(int $siteId, string $channelId): array
+    {
         if ($this->websub()->othersWatch($channelId, $siteId)) {
             $connection = SocialStream::$plugin->token->getConnection($siteId, $this->getHandle());
             $connection->websubExpiresAt = null;
