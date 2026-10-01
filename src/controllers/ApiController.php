@@ -20,7 +20,14 @@ class ApiController extends Controller
 {
     protected array|int|bool $allowAnonymous = ['index'];
 
-    public bool $enableCsrfValidation = false;
+    /**
+     * The caller is not a browser and carries no session.
+     *
+     * Deliberately untyped: yii\web\Controller declares this property without a type,
+     * and PHP treats a typed redeclaration as a fatal error at class load — which is a
+     * 500 on every request this controller handles.
+     */
+    public $enableCsrfValidation = false;
 
     /**
      * GET /actions/social-stream/api

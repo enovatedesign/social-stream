@@ -1,0 +1,80 @@
+{# Fallback for a provider registered by another plugin, which this one has no
+   dedicated UI for. It still gets a status panel and the shared credential fields,
+   since every provider stores an app ID and secret the same way. #}
+{% import '_includes/forms' as forms %}
+
+<div class="pane" style="padding: 16px 20px; margin-bottom: 24px;">
+    <h2 style="margin-top: 0;">{{ 'Connection Status' | t('social-stream') }}</h2>
+
+    <table class="data fullwidth" style="margin-bottom: 16px;">
+        <tbody>
+            <tr>
+                <th style="width: 200px;">{{ 'Status' | t('social-stream') }}</th>
+                <td><span class="status {{ row.status }}"></span>{{ row.statusLabel }}</td>
+            </tr>
+            {% if row.account %}
+                <tr>
+                    <th>{{ 'Account' | t('social-stream') }}</th>
+                    <td>{{ row.account }}</td>
+                </tr>
+            {% endif %}
+            {% if row.lastFetchAt %}
+                <tr>
+                    <th>{{ 'Last Successful Fetch' | t('social-stream') }}</th>
+                    <td>{{ row.lastFetchAt | date('j M Y, g:ia') }}</td>
+                </tr>
+            {% endif %}
+            {% if row.lastError %}
+                <tr>
+                    <th>{{ 'Last Error' | t('social-stream') }}</th>
+                    <td>
+                        <span style="color: var(--ui-danger-text-color, #c00);">{{ row.lastError }}</span>
+                        {% if row.lastErrorAt %}
+                            <span class="light"> · {{ row.lastErrorAt | date('j M Y, g:ia') }}</span>
+                        {% endif %}
+                    </td>
+                </tr>
+            {% endif %}
+        </tbody>
+    </table>
+
+    {% if row.connected %}
+        {% include 'social-stream/settings/_provider-actions' %}
+    {% endif %}
+</div>
+
+{{ forms.autosuggestField({
+    label: 'App ID' | t('social-stream'),
+    instructions: 'The client or app identifier this provider authenticates with. Supports environment variables.' | t('social-stream'),
+    id: 'appId',
+    name: 'appId',
+    value: credentials.appId,
+    suggestions: craft.cp.getEnvSuggestions(),
+    suggestEnvVars: true,
+}) }}
+
+{{ forms.autosuggestField({
+    label: 'App Secret' | t('social-stream'),
+    instructions: 'The matching secret. Supports environment variables.' | t('social-stream'),
+    id: 'appSecret',
+    name: 'appSecret',
+    value: credentials.appSecretIsEnvVar ? credentials.appSecret : '',
+    placeholder: (not credentials.appSecretIsEnvVar and credentials.hasAppSecret) ? '••••••••' : '',
+    suggestions: craft.cp.getEnvSuggestions(),
+    suggestEnvVars: true,
+}) }}
+
+{% set authInput %}
+    <a id="auth-btn" class="btn submit {% if not credentials.appId %}disabled{% endif %}" href="#">
+        {{ row.connected ? 'Re-authorise' | t('social-stream') : 'Authorise' | t('social-stream') }}
+    </a>
+    <p class="light" style="margin: 8px 0 0;">
+        {{ 'Add this redirect URI to the app:' | t('social-stream') }}
+        <code style="user-select: all;">{{ redirectUri }}</code>
+    </p>
+{% endset %}
+
+{{ forms.field({
+    label: 'Authorisation' | t('social-stream'),
+    id: 'auth-section',
+}, authInput) }}

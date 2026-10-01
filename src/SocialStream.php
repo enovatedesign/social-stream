@@ -16,6 +16,7 @@ use craft\web\twig\variables\CraftVariable;
 use craft\web\UrlManager;
 use enovate\socialstream\models\Settings;
 use enovate\socialstream\providers\InstagramProvider;
+use enovate\socialstream\providers\YouTubeProvider;
 use enovate\socialstream\services\CacheService;
 use enovate\socialstream\services\Providers;
 use enovate\socialstream\services\TokenService;
@@ -38,7 +39,7 @@ class SocialStream extends Plugin
 {
     public static SocialStream $plugin;
 
-    public string $schemaVersion = '1.1.0';
+    public string $schemaVersion = '1.3.0';
 
     public bool $hasCpSection = true;
 
@@ -169,6 +170,10 @@ class SocialStream extends Plugin
             UrlManager::EVENT_REGISTER_SITE_URL_RULES,
             function (RegisterUrlRulesEvent $event) {
                 $event->rules['social-stream/auth/callback'] = 'social-stream/auth/callback';
+
+                // YouTube's WebSub hub uses one URL for the subscription handshake
+                // and the notifications that follow, so both methods land here.
+                $event->rules['social-stream/webhook/youtube'] = 'social-stream/webhook/youtube';
             }
         );
     }
@@ -182,6 +187,11 @@ class SocialStream extends Plugin
                 $event->rules = array_merge($event->rules, [
                     'social-stream' => 'social-stream/settings/index',
                     'social-stream/settings' => 'social-stream/settings/index',
+                    // Before the site-only rule: a provider page is a longer path, and
+                    // Craft takes the first rule that matches.
+                    'social-stream/settings/<siteHandle:{handle}>/provider/<provider:[\w\-]+>'
+                        => 'social-stream/settings/provider',
+                    'social-stream/settings/provider/<provider:[\w\-]+>' => 'social-stream/settings/provider',
                     'social-stream/settings/<siteHandle:{handle}>' => 'social-stream/settings/index',
                 ]);
             }
@@ -213,6 +223,7 @@ class SocialStream extends Plugin
             Providers::EVENT_REGISTER_PROVIDER_TYPES,
             function (RegisterComponentTypesEvent $event) {
                 $event->types[] = InstagramProvider::class;
+                $event->types[] = YouTubeProvider::class;
             }
         );
     }

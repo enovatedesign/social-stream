@@ -99,7 +99,13 @@ class Post extends Model
         $post->provider = $data['provider'] ?? null;
         $post->caption = $data['caption'] ?? null;
         $post->permalink = $data['permalink'] ?? null;
-        $post->timestamp = isset($data['timestamp']) ? DateTimeHelper::toDateTime($data['timestamp']) ?: null : null;
+        // Rebuilt at the offset it was serialised with, rather than converted to the
+        // system timezone: the instant is the same either way, Twig's `|date` filter
+        // formats in the app's timezone regardless, and leaving it alone makes the
+        // round trip through the cache byte-for-byte reversible.
+        $post->timestamp = isset($data['timestamp'])
+            ? DateTimeHelper::toDateTime($data['timestamp'], false, false) ?: null
+            : null;
         $post->likeCount = isset($data['likeCount']) ? (int) $data['likeCount'] : null;
         $post->commentsCount = isset($data['commentsCount']) ? (int) $data['commentsCount'] : null;
         $post->author = isset($data['author']) && is_array($data['author']) ? PostAuthor::fromArray($data['author']) : null;

@@ -7,6 +7,7 @@ use craft\base\Component;
 use craft\helpers\DateTimeHelper;
 use enovate\socialstream\events\FetchStreamEvent;
 use enovate\socialstream\records\ConnectionRecord;
+use enovate\socialstream\records\SettingsRecord;
 use enovate\socialstream\SocialStream;
 
 /**
@@ -42,10 +43,67 @@ abstract class Provider extends Component implements ProviderInterface
      */
     protected const REAUTH_PROBE_INTERVAL = 3600;
 
+    /**
+     * Default maximum number of API pages to fetch when filtering reduces results.
+     * Can be overridden via config/social-stream.php: 'maxFetchPages' => 5
+     */
+    protected const DEFAULT_MAX_FETCH_PAGES = 3;
+
     // Static metadata
     // =========================================================================
 
     abstract public static function handle(): string;
+
+    /**
+     * Whether the `excludeNonFeed` option means anything to this provider.
+     *
+     * It is Instagram's "was this shared to the main feed?" flag, and a provider
+     * that ignores the option must say so — otherwise {@see \enovate\socialstream\services\CacheService}
+     * keys two identical entries on a flag that changed nothing.
+     */
+    public static function usesExcludeNonFeed(): bool
+    {
+        return true;
+    }
+
+    /**
+     * Whether this provider authenticates with OAuth.
+     *
+     * A provider returning `false` has no authorisation flow, no tokens to store and
+     * nothing to refresh, so the CP hides the connect button and the token refresh
+     * cron and console command skip it. YouTube reads a public channel with an API
+     * key, which is why this exists.
+     */
+    public static function usesOAuth(): bool
+    {
+        return true;
+    }
+
+    /**
+     * Where to send the admin to authorise this provider.
+     *
+     * No URL by default: a provider that authenticates with OAuth has to say where its
+     * authorisation screen is, because nothing else can know. Returning null is the
+     * honest answer for a provider with no flow at all, and the control panel reports
+     * it rather than redirecting somewhere arbitrary.
+     */
+    public function authorizationUrl(string $appId, string $redirectUri, string $state): ?string
+    {
+        return null;
+    }
+
+    /**
+     * Whatever this provider needs to do once its tokens are stored.
+     *
+     * Nothing by default. A provider that has an account type to check, or an identity
+     * worth recording from the response, overrides this.
+     *
+     * @return string|null An error to show the admin, or null if the account is usable.
+     */
+    public function completeAuthorization(int $siteId, ?string $token): ?string
+    {
+        return null;
+    }
 
     // Instance delegates — cheap sugar so callers can work with instances.
     // =========================================================================
@@ -135,16 +193,57 @@ abstract class Provider extends Component implements ProviderInterface
         // to read.
         if (($result['success'] ?? false) === true) {
             $this->clearReauthFlag($siteId);
+
+            // The connected account's name exists only in a profile response, and
+            // this is the one method every caller of one goes through — the CP's
+            // Test Connection, the OAuth callback confirming a new connection, and
+            // the Twig variable alike. Remembering it here is what stops the control
+            // panel falling back to a raw provider identifier.
+            SocialStream::$plugin->streamCache->rememberAccount(
+                $siteId,
+                $this->getHandle(),
+                $result['data'] ?? null,
+            );
         }
 
         return $result;
     }
 
+    /**
+     * Whether credentials are stored for this site.
+     *
+     * Reads the stored credentials rather than asking the token service for a usable
+     * token: for a provider that renews its access token on demand, that would turn a
+     * question about configuration into an HTTP request to the provider.
+     *
+     * What counts as configured depends on how the provider authenticates. Testing the
+     * access token alone answered `false` for every API-key provider however completely
+     * it was set up, because there is no token to hold — the key and the account it was
+     * told to read are the credentials, which is the same pair the control panel reports
+     * as connected.
+     */
     public function isConfigured(int $siteId): bool
     {
-        $token = SocialStream::$plugin->token->getAccessToken($siteId, $this->getHandle());
+        $connection = $this->connection($siteId);
 
-        return $token !== null && $token !== '';
+        if ($connection === null) {
+            return false;
+        }
+
+        if (!static::usesOAuth()) {
+            return $this->isStored($connection->apiKey)
+                && $this->isStored($connection->providerUserId);
+        }
+
+        return $this->isStored($connection->accessToken);
+    }
+
+    /**
+     * Whether a credential column holds anything.
+     */
+    private function isStored(?string $value): bool
+    {
+        return $value !== null && $value !== '';
     }
 
     // Provider-specific work
@@ -182,20 +281,28 @@ abstract class Provider extends Component implements ProviderInterface
         return $isLimited;
     }
 
-    protected function enterRateLimitCooldown(int $siteId): void
+    /**
+     * @param int|null $ttl How long to suppress calls for, in seconds. Defaults to
+     *                      {@see RATE_LIMIT_TTL}. A provider whose limit is a daily
+     *                      quota rather than a rolling window passes the time until
+     *                      that quota resets, since retrying before then is certain
+     *                      to fail.
+     */
+    protected function enterRateLimitCooldown(int $siteId, ?int $ttl = null): void
     {
         $key = $this->rateLimitKey($siteId);
         $wasLimitedKey = $this->rateLimitExpiryKey($siteId);
+        $ttl = max(1, $ttl ?? static::RATE_LIMIT_TTL);
 
         if (Craft::$app->cache->get($key) === false) {
             SocialStream::warning(
                 'Rate limit hit for ' . $this->getHandle() . ' site ' . $siteId
-                . '. Entering ' . (static::RATE_LIMIT_TTL / 60) . '-minute cooldown.'
+                . '. Entering ' . round($ttl / 60) . '-minute cooldown.'
             );
         }
 
-        Craft::$app->cache->set($key, true, static::RATE_LIMIT_TTL);
-        Craft::$app->cache->set($wasLimitedKey, true, static::RATE_LIMIT_TTL * 2);
+        Craft::$app->cache->set($key, true, $ttl);
+        Craft::$app->cache->set($wasLimitedKey, true, $ttl * 2);
     }
 
     // Failure backoff and re-auth probing
@@ -348,6 +455,34 @@ abstract class Provider extends Component implements ProviderInterface
             'siteId' => $siteId,
             'provider' => $this->getHandle(),
         ]);
+    }
+
+    // Shared settings helpers
+    // =========================================================================
+
+    /**
+     * How many posts to return when the caller didn't say: the site's CP setting,
+     * then the plugin-wide setting, then a sane floor.
+     */
+    protected function defaultLimitForSite(int $siteId): int
+    {
+        $record = SettingsRecord::findOne(['siteId' => $siteId]);
+
+        return $record->defaultLimit ?? SocialStream::$plugin->getSettings()->defaultLimit ?? 25;
+    }
+
+    /**
+     * How many API pages a single fetch may walk before giving up on filling the
+     * requested limit.
+     */
+    protected function maxFetchPages(): int
+    {
+        return (int) ($this->pluginConfig()['maxFetchPages'] ?? static::DEFAULT_MAX_FETCH_PAGES);
+    }
+
+    protected function pluginConfig(): array
+    {
+        return Craft::$app->config->getConfigFromFile('social-stream');
     }
 
     // Response shapes

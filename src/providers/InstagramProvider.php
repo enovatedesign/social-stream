@@ -31,10 +31,10 @@ class InstagramProvider extends Provider
     public const ERROR_CODE_INVALID_TOKEN = 190;
 
     /**
-     * Default maximum number of API pages to fetch when filtering reduces results.
-     * Can be overridden via config/social-stream.php: 'maxFetchPages' => 5
+     * The account types the Graph API will serve media for. A Personal account
+     * authorises successfully and then returns nothing.
      */
-    private const DEFAULT_MAX_FETCH_PAGES = 3;
+    private const SERVABLE_ACCOUNT_TYPES = ['BUSINESS', 'CREATOR', 'MEDIA_CREATOR'];
 
     /**
      * Default number of media items to request per API page when filtering is
@@ -66,6 +66,131 @@ class InstagramProvider extends Provider
     public static function displayName(): string
     {
         return 'Instagram';
+    }
+
+    // Authorisation
+    // =========================================================================
+
+    /**
+     * Instagram's authorisation screen.
+     *
+     * `enable_fb_login=0` keeps this on the Instagram login rather than Facebook's, and
+     * `force_authentication=1` makes an admin already signed in as somebody else
+     * confirm the account rather than silently connecting it.
+     */
+    public function authorizationUrl(string $appId, string $redirectUri, string $state): ?string
+    {
+        return 'https://www.instagram.com/oauth/authorize?' . http_build_query([
+            'enable_fb_login' => 0,
+            'force_authentication' => 1,
+            'client_id' => $appId,
+            'redirect_uri' => $redirectUri,
+            'response_type' => 'code',
+            'scope' => 'instagram_business_basic',
+            'state' => $state,
+        ]);
+    }
+
+    /**
+     * Check what kind of account was connected, and remember which account it is.
+     *
+     * Only a Business or Creator account can serve media through the Graph API, and the
+     * failure on a Personal one is an empty stream rather than an error — so it is worth
+     * catching while the admin is still here.
+     *
+     * The user ID is stored because a stream refresh needs it and a cache flush must not
+     * be able to lose it.
+     *
+     * A failure to reach Instagram is deliberately not an error: the tokens are already
+     * stored and valid by this point, and turning a working connection into an error
+     * page invites the admin to connect all over again.
+     *
+     * @return string|null An error to show the admin, or null if the account is usable.
+     */
+    public function completeAuthorization(int $siteId, ?string $token): ?string
+    {
+        // Falsy, not just null: an empty token is no more usable than a missing one, and
+        // the stored one is worth trying before giving up on the check.
+        if (!$token) {
+            $token = SocialStream::$plugin->token->getAccessToken($siteId, self::handle());
+        }
+
+        if (!$token) {
+            return Craft::t('social-stream', 'Could not retrieve access token for validation.');
+        }
+
+        try {
+            $response = Craft::createGuzzleClient()->get($this->apiUrl('me'), [
+                'query' => [
+                    'fields' => 'id,user_id,username,account_type',
+                    'access_token' => $token,
+                ],
+            ]);
+
+            $data = json_decode($response->getBody()->getContents(), true);
+        } catch (\Throwable $e) {
+            // Broad on purpose: the tokens are stored and valid by now, so nothing here
+            // may turn a connection that works into an error page.
+            SocialStream::error('Could not check the connected Instagram account: ' . $e->getMessage());
+
+            return null;
+        }
+
+        if (!is_array($data)) {
+            SocialStream::warning('Instagram returned an unreadable response when checking the connected account.');
+
+            return null;
+        }
+
+        $this->rememberUserId($siteId, $data['user_id'] ?? $data['id'] ?? null);
+
+        return $this->accountTypeError($data['account_type'] ?? null);
+    }
+
+    /**
+     * Store the account's own identifier against the connection.
+     */
+    private function rememberUserId(int $siteId, mixed $userId): void
+    {
+        if (!$userId) {
+            return;
+        }
+
+        $connection = SocialStream::$plugin->token->getConnection($siteId, self::handle());
+        $connection->providerUserId = (string) $userId;
+
+        if (!$connection->save()) {
+            SocialStream::error(
+                'Connected the Instagram account for site ' . $siteId
+                . ' but could not store its user ID: ' . json_encode($connection->getErrors())
+            );
+        }
+    }
+
+    /**
+     * An account type the Graph API will not serve media for, named so the admin can
+     * act on it. An absent type is not treated as a failure — it means the field was
+     * not returned, not that the account is the wrong kind.
+     */
+    private function accountTypeError(mixed $accountType): ?string
+    {
+        if (!is_string($accountType) || $accountType === '') {
+            return null;
+        }
+
+        if (in_array(strtoupper($accountType), self::SERVABLE_ACCOUNT_TYPES, true)) {
+            return null;
+        }
+
+        SocialStream::warning(
+            'Connected account type is "' . $accountType . '" — expected Business or Creator.'
+        );
+
+        return Craft::t(
+            'social-stream',
+            'The connected Instagram account must be a Business or Creator account. Detected: {type}',
+            ['type' => $accountType]
+        );
     }
 
     // Stream
@@ -502,12 +627,6 @@ class InstagramProvider extends Provider
     // Settings helpers
     // =========================================================================
 
-    private function defaultLimitForSite(int $siteId): int
-    {
-        $record = SettingsRecord::findOne(['siteId' => $siteId]);
-        return $record->defaultLimit ?? SocialStream::$plugin->getSettings()->defaultLimit ?? 25;
-    }
-
     private function excludeNonFeedForSite(int $siteId): bool
     {
         $record = SettingsRecord::findOne(['siteId' => $siteId]);
@@ -517,17 +636,9 @@ class InstagramProvider extends Provider
         return (bool) SocialStream::$plugin->getSettings()->excludeNonFeed;
     }
 
-    private function maxFetchPages(): int
-    {
-        $config = Craft::$app->config->getConfigFromFile('social-stream');
-        return $config['maxFetchPages'] ?? self::DEFAULT_MAX_FETCH_PAGES;
-    }
-
     private function configuredPageSize(): int
     {
-        $config = Craft::$app->config->getConfigFromFile('social-stream');
-
-        return (int) ($config['fetchPageSize'] ?? self::DEFAULT_FETCH_PAGE_SIZE);
+        return (int) ($this->pluginConfig()['fetchPageSize'] ?? self::DEFAULT_FETCH_PAGE_SIZE);
     }
 
     /**

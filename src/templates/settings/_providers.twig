@@ -1,0 +1,53 @@
+{# The Providers table — every registered provider, its state, and the way in. #}
+
+{% if providerRows | length %}
+    <table class="data fullwidth">
+        <thead>
+            <tr>
+                <th scope="col">{{ 'Provider' | t('social-stream') }}</th>
+                <th scope="col">{{ 'Status' | t('social-stream') }}</th>
+                <th scope="col">{{ 'Last Successful Fetch' | t('social-stream') }}</th>
+                <th scope="col" class="thin"></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in providerRows %}
+                <tr>
+                    <th scope="row">
+                        <a href="{{ row.url }}">{{ row.name }}</a>
+                        {% if row.account %}
+                            <div class="light" style="margin-top: 2px; font-size: 12px; font-weight: normal;">
+                                {{ row.account }}
+                            </div>
+                        {% endif %}
+                    </th>
+                    <td>
+                        <span class="status {{ row.status }}"></span>{{ row.statusLabel }}
+                        {% if row.lastError %}
+                            <div class="light" style="margin-top: 4px; font-size: 12px;">
+                                {{ row.lastError }}
+                                {% if row.lastErrorAt %}
+                                    · {{ row.lastErrorAt | date('j M Y, g:ia') }}
+                                {% endif %}
+                            </div>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {{ row.lastFetchAt ? row.lastFetchAt | date('j M Y, g:ia') : '—' }}
+                    </td>
+                    <td class="thin">
+                        <a class="btn {{ row.connected ? '' : 'submit' }}" href="{{ row.url }}">
+                            {{ row.actionLabel }}
+                        </a>
+                    </td>
+                </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <p class="light" style="margin-top: 16px;">
+        {{ 'Each provider keeps its own credentials and connected account per site. Settings on the Configuration and API tabs apply to all of them.' | t('social-stream') }}
+    </p>
+{% else %}
+    <p class="light">{{ 'No providers are registered.' | t('social-stream') }}</p>
+{% endif %}
