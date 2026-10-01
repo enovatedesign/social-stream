@@ -136,8 +136,8 @@ No billing account is needed. The API is free within its daily quota of 10,000 u
 
    | What you paste | Example |
    |---|---|
-   | The channel's handle URL | `https://www.youtube.com/@EssexWebDevelopers` |
-   | Just the handle | `@EssexWebDevelopers` |
+   | The channel's handle URL | `https://www.youtube.com/@esxdev` |
+   | Just the handle | `@esxdev` |
    | A channel ID URL | `https://www.youtube.com/channel/UCuAXFkgsw1L7xaCfnd5JJOw` |
    | Just the channel ID | `UCuAXFkgsw1L7xaCfnd5JJOw` |
    | A legacy username URL | `https://www.youtube.com/user/SomeName` |
