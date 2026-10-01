@@ -79,6 +79,32 @@ abstract class Provider extends Component implements ProviderInterface
         return true;
     }
 
+    /**
+     * Where to send the admin to authorise this provider.
+     *
+     * No URL by default: a provider that authenticates with OAuth has to say where its
+     * authorisation screen is, because nothing else can know. Returning null is the
+     * honest answer for a provider with no flow at all, and the control panel reports
+     * it rather than redirecting somewhere arbitrary.
+     */
+    public function authorizationUrl(string $appId, string $redirectUri, string $state): ?string
+    {
+        return null;
+    }
+
+    /**
+     * Whatever this provider needs to do once its tokens are stored.
+     *
+     * Nothing by default. A provider that has an account type to check, or an identity
+     * worth recording from the response, overrides this.
+     *
+     * @return string|null An error to show the admin, or null if the account is usable.
+     */
+    public function completeAuthorization(int $siteId, ?string $token): ?string
+    {
+        return null;
+    }
+
     // Instance delegates — cheap sugar so callers can work with instances.
     // =========================================================================
 
@@ -186,15 +212,38 @@ abstract class Provider extends Component implements ProviderInterface
     /**
      * Whether credentials are stored for this site.
      *
-     * Reads the stored token rather than asking the token service for a usable one:
-     * for a provider that renews its access token on demand, that would turn a
+     * Reads the stored credentials rather than asking the token service for a usable
+     * token: for a provider that renews its access token on demand, that would turn a
      * question about configuration into an HTTP request to the provider.
+     *
+     * What counts as configured depends on how the provider authenticates. Testing the
+     * access token alone answered `false` for every API-key provider however completely
+     * it was set up, because there is no token to hold — the key and the account it was
+     * told to read are the credentials, which is the same pair the control panel reports
+     * as connected.
      */
     public function isConfigured(int $siteId): bool
     {
         $connection = $this->connection($siteId);
 
-        return $connection !== null && $connection->accessToken !== null && $connection->accessToken !== '';
+        if ($connection === null) {
+            return false;
+        }
+
+        if (!static::usesOAuth()) {
+            return $this->isStored($connection->apiKey)
+                && $this->isStored($connection->providerUserId);
+        }
+
+        return $this->isStored($connection->accessToken);
+    }
+
+    /**
+     * Whether a credential column holds anything.
+     */
+    private function isStored(?string $value): bool
+    {
+        return $value !== null && $value !== '';
     }
 
     // Provider-specific work

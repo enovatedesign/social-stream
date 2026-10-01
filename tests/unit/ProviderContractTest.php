@@ -52,6 +52,55 @@ class ProviderContractTest extends TestCase
     }
 
     /**
+     * @return array<string, array{0: string}>
+     */
+    public static function authorisationHooks(): array
+    {
+        return [
+            'authorizationUrl' => ['authorizationUrl'],
+            'completeAuthorization' => ['completeAuthorization'],
+        ];
+    }
+
+    /**
+     * The auth controller asks whichever provider is coming back where to send the
+     * admin and what to check afterwards. Both used to be Instagram's, run for every
+     * provider — so a second OAuth provider would have been sent to instagram.com and
+     * had its identity written to Instagram's connection row.
+     */
+    #[DataProvider('authorisationHooks')]
+    public function testTheContractCoversTheAuthorisationHooks(string $method): void
+    {
+        $interface = new ReflectionClass(ProviderInterface::class);
+
+        self::assertTrue($interface->hasMethod($method), "{$method}() is called on whatever the registry returns.");
+        self::assertTrue($interface->getMethod($method)->isPublic());
+    }
+
+    /**
+     * A provider with no authorisation flow must answer "nowhere" rather than inherit
+     * somebody else's URL.
+     */
+    public function testAProviderWithoutAnAuthorisationFlowPublishesNoUrl(): void
+    {
+        self::assertNull(
+            (new YouTubeProvider())->authorizationUrl('app-id', 'https://example.test/callback', 'state'),
+            'YouTube has no authorisation screen — redirecting anywhere would be a guess.'
+        );
+    }
+
+    public function testInstagramPublishesItsOwnAuthorisationUrl(): void
+    {
+        $url = (new InstagramProvider())->authorizationUrl('app-id', 'https://example.test/callback', 'the-state');
+
+        self::assertNotNull($url);
+        self::assertStringStartsWith('https://www.instagram.com/oauth/authorize?', $url);
+        self::assertStringContainsString('client_id=app-id', $url);
+        self::assertStringContainsString('state=the-state', $url);
+        self::assertStringContainsString('redirect_uri=' . urlencode('https://example.test/callback'), $url);
+    }
+
+    /**
      * The question the WebSub renewal command got wrong: YouTube has no access token,
      * so its connections cannot be judged by one.
      */

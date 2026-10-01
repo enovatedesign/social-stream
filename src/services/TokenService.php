@@ -296,6 +296,16 @@ class TokenService extends Component
             ];
         }
 
+        // Instagram's two-step exchange is Instagram's, not a shared default. Running it
+        // for another provider would post that provider's code to Instagram's token
+        // endpoint and report the refusal as a failed exchange.
+        if ($provider !== InstagramProvider::handle()) {
+            return [
+                'success' => false,
+                'error' => $this->noAuthCodeExchange($provider),
+            ];
+        }
+
         return $this->_exchangeInstagramAuthCode(
             $code,
             $siteId,
@@ -533,6 +543,22 @@ class TokenService extends Component
         $registered = SocialStream::$plugin->providers->getProviderByHandle($provider);
 
         return $registered === null || $registered::usesOAuth();
+    }
+
+    /**
+     * A provider that uses OAuth but whose code exchange this service does not know.
+     *
+     * Instagram's is the only one implemented, and it is specific to Instagram: two
+     * steps, its endpoints, its long-lived token. Saying so is better than posting
+     * somebody else's authorisation code to graph.instagram.com.
+     */
+    private function noAuthCodeExchange(string $provider): string
+    {
+        $name = SocialStream::$plugin->providers->getProviderByHandle($provider)?->getDisplayName()
+            ?? ucfirst($provider);
+
+        return 'Social Stream does not know how to exchange an authorisation code for '
+            . $name . '. Only Instagram\'s OAuth flow is implemented.';
     }
 
     private function notAnOAuthProvider(string $provider): string

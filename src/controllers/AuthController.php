@@ -22,6 +22,10 @@ use yii\web\Response;
  * each provider's app, and asking an admin to register a different one per provider
  * invites the mismatch that breaks the flow. The `state` parameter says which
  * provider is coming back; see {@see OAuthState}.
+ *
+ * Nothing provider-specific lives here. Where to send the admin, and what to check
+ * once the tokens are stored, come from the provider itself — this controller only
+ * sequences them.
  */
 class AuthController extends Controller
 {
@@ -42,6 +46,7 @@ class AuthController extends Controller
         $request = Craft::$app->request;
         $siteId = (int) $request->getRequiredQueryParam('siteId');
         $provider = $this->_resolveProvider($request->getQueryParam('provider'));
+        $instance = SocialStream::$plugin->providers->getProviderByHandle($provider);
 
         if (!$this->_usesOAuth($provider)) {
             Craft::$app->session->setError(
@@ -65,11 +70,26 @@ class AuthController extends Controller
             return $this->redirect($this->_settingsUrl($siteId));
         }
 
-        return $this->redirect($this->_instagramAuthUrl(
+        $authUrl = $instance?->authorizationUrl(
             App::parseEnv($appId),
             $tokenService->getRedirectUri(),
             OAuthState::encode($siteId, $provider),
-        ));
+        );
+
+        // Each provider says where its own authorisation screen is. Building one
+        // provider's URL for all of them would send the rest somewhere that has never
+        // heard of their client ID.
+        if ($authUrl === null) {
+            Craft::$app->session->setError(
+                Craft::t('social-stream', '{provider} does not publish an authorisation URL.', [
+                    'provider' => $this->_displayName($provider),
+                ])
+            );
+
+            return $this->redirect($this->_settingsUrl($siteId));
+        }
+
+        return $this->redirect($authUrl);
     }
 
     /**
@@ -120,7 +140,12 @@ class AuthController extends Controller
             return $this->redirect($this->_settingsUrl($siteId));
         }
 
-        $validation = $this->_validateAccountType($siteId, $result['token'] ?? null);
+        // The provider's own post-exchange checks. Instagram's used to run for every
+        // provider, which meant asking Instagram about another provider's token and
+        // writing the answer to Instagram's connection row.
+        $validation = SocialStream::$plugin->providers
+            ->getProviderByHandle($provider)
+            ?->completeAuthorization($siteId, $result['token'] ?? null);
 
         if ($validation !== null) {
             Craft::$app->session->setError($validation);
@@ -135,78 +160,6 @@ class AuthController extends Controller
         );
 
         return $this->redirect($this->_settingsUrl($siteId));
-    }
-
-    /**
-     * Instagram's authorisation URL.
-     */
-    private function _instagramAuthUrl(string $appId, string $redirectUri, string $state): string
-    {
-        $params = http_build_query([
-            'enable_fb_login' => 0,
-            'force_authentication' => 1,
-            'client_id' => $appId,
-            'redirect_uri' => $redirectUri,
-            'response_type' => 'code',
-            'scope' => 'instagram_business_basic',
-            'state' => $state,
-        ]);
-
-        return 'https://www.instagram.com/oauth/authorize?' . $params;
-    }
-
-    /**
-     * Validate that the connected Instagram account is a Business or Creator account.
-     *
-     * @return string|null Error message if validation fails, null on success.
-     */
-    private function _validateAccountType(int $siteId, ?string $token = null): ?string
-    {
-        if (!$token) {
-            $token = SocialStream::$plugin->token->getAccessToken($siteId, InstagramProvider::handle());
-        }
-
-        if (!$token) {
-            return Craft::t('social-stream', 'Could not retrieve access token for validation.');
-        }
-
-        try {
-            $client = Craft::createGuzzleClient();
-            $url = InstagramProvider::API_BASE_URL . '/' . InstagramProvider::API_VERSION . '/me';
-
-            $response = $client->get($url, [
-                'query' => [
-                    'fields' => 'id,user_id,username,account_type',
-                    'access_token' => $token,
-                ],
-            ]);
-
-            $data = json_decode($response->getBody()->getContents(), true);
-
-            // Persist the user ID so stream refreshes survive cache flushes
-            $userId = $data['user_id'] ?? $data['id'] ?? null;
-            if ($userId) {
-                $connection = SocialStream::$plugin->token->getConnection($siteId, InstagramProvider::handle());
-                if ($connection) {
-                    $connection->providerUserId = $userId;
-                    $connection->save();
-                }
-            }
-
-            $accountType = $data['account_type'] ?? null;
-
-            if ($accountType && !in_array(strtoupper($accountType), ['BUSINESS', 'CREATOR', 'MEDIA_CREATOR'], true)) {
-                SocialStream::warning('Connected account type is "' . $accountType . '" — expected Business or Creator.');
-                return Craft::t('social-stream', 'The connected Instagram account must be a Business or Creator account. Detected: {type}', [
-                    'type' => $accountType,
-                ]);
-            }
-
-            return null;
-        } catch (\Exception $e) {
-            SocialStream::error('Account type validation failed: ' . $e->getMessage());
-            return null; // Don't block the flow — token is stored, warn separately
-        }
     }
 
     /**

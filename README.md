@@ -235,7 +235,7 @@ return [
 | `excludeNonFeed` | `bool` | `false` | Exclude posts where `is_shared_to_feed` is false |
 | `cacheDuration` | `int` | `60` | Cache TTL in minutes |
 | `secureApiEndpoint` | `bool` | `false` | Enable the JSON API endpoint |
-| `maxFetchPages` | `int` | `3` | Max API pages to fetch when filtering reduces results |
+| `maxFetchPages` | `int` | `3` | Max API pages a single fetch may request |
 | `fetchPageSize` | `int` | `25` | Items requested per API page when filtering is active (1-100). Instagram only |
 | `shortsDetection` | `bool` | `true` | Whether to identify YouTube Shorts. With this off, every video is reported as `VIDEO` |
 | `shortsRedirectFallback` | `bool` | `true` | Whether to fall back to a `/shorts/` page request for videos oEmbed can't classify |
@@ -248,6 +248,8 @@ return [
 This matters most when `limit` is small. Asking for 3 posts does **not** mean only 3 posts are examined; a full page is fetched and filtered down. Without that, a template asking for 3 posts from an account where most posts are filtered out would render one or two tiles, or none at all.
 
 If a filtered stream is still returning fewer posts than you asked for, the account has fewer matching posts than `maxFetchPages × fetchPageSize` reaches back. Raise `fetchPageSize` first — it costs the same number of API calls — then `maxFetchPages`.
+
+`maxFetchPages` also bounds an **unfiltered** YouTube stream, because the Data API will not return more than 50 items per request: a `limit` above 50 is reached across pages, up to `maxFetchPages × 50`. Instagram accepts the whole limit in one request, so it needs no pages unless a filter is active. Either way, a fetch that stops on the page budget with more available logs a warning naming the shortfall rather than quietly returning a short stream.
 
 ---
 
@@ -784,6 +786,13 @@ Three optional hooks are worth knowing about:
 - `usesOAuth()` — return `false` if your provider authenticates with something other than OAuth, as YouTube's API key does. There is then no authorisation flow, no token to store and nothing to refresh, so the control panel hides the connect button and the token refresh cron and console command skip your provider instead of reporting a failure once a run. Defaults to `true`.
 - `usesExcludeNonFeed()` — return `false` if the `excludeNonFeed` option means nothing to your provider, as YouTube's does. The option is then normalised out of your cache keys instead of splitting one stream across two identical entries. Defaults to `true`, which preserves the existing key shape for any provider that doesn't override it.
 - `enterRateLimitCooldown($siteId, $ttl)` — pass a `$ttl` when your provider's limit is a daily quota rather than a rolling window, so calls are suppressed until it actually resets. Omit it for the default 15 minutes.
+
+A provider that returns `true` from `usesOAuth()` needs two more:
+
+- `authorizationUrl($appId, $redirectUri, $state)` — where to send the admin to authorise. Return `null` (the default) and the control panel says your provider publishes no authorisation URL rather than redirecting somewhere arbitrary. Pass `$state` through untouched; it is how the shared callback knows which provider is coming back.
+- `completeAuthorization($siteId, $token)` — anything to do once the tokens are stored, such as checking the kind of account that was connected or recording the identity the provider returned. Return an error string to show the admin, or `null` if the account is usable. Defaults to `null`.
+
+Note that only Instagram's authorisation **code exchange** is implemented; a second OAuth provider would need its own exchange adding to `TokenService` and is reported as unsupported until then.
 
 ### Lifecycle events
 

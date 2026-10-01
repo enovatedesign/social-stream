@@ -68,4 +68,33 @@ interface ProviderInterface
      * keys two identical entries on a flag that changed nothing about either.
      */
     public static function usesExcludeNonFeed(): bool;
+
+    /**
+     * Where to send the admin to authorise this provider.
+     *
+     * Only meaningful when {@see usesOAuth()} is true, and `null` means the provider
+     * publishes no authorisation URL — the control panel reports that rather than
+     * redirecting somewhere that cannot know this provider's client ID.
+     *
+     * On the contract because {@see \enovate\socialstream\controllers\AuthController}
+     * asks whichever provider is coming back. It used to build Instagram's URL for all
+     * of them, so a second OAuth provider would have been sent to instagram.com.
+     *
+     * {@see Provider} answers `null`, so a provider with no authorisation flow — every
+     * API-key provider — needs no implementation.
+     */
+    public function authorizationUrl(string $appId, string $redirectUri, string $state): ?string;
+
+    /**
+     * Whatever this provider needs to do once its tokens are stored.
+     *
+     * Checking the kind of account that was connected, and recording the identity the
+     * provider gave back, belong to the provider: run for all of them, Instagram's
+     * checks queried Instagram about another provider's token and wrote the answer to
+     * Instagram's connection row.
+     *
+     * @param string|null $token The token just issued, if the exchange returned one.
+     * @return string|null An error to show the admin, or null if the account is usable.
+     */
+    public function completeAuthorization(int $siteId, ?string $token): ?string;
 }

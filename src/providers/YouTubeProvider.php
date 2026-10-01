@@ -135,13 +135,13 @@ class YouTubeProvider extends Provider
 
         $needsFiltering = $mediaType !== null;
         $maxPages = $this->maxFetchPages();
-        $pageSize = $needsFiltering ? self::MAX_RESULTS : min($limit, self::MAX_RESULTS);
 
         $collected = [];
         $nextCursor = $after;
         $pagesUsed = 0;
 
         while (count($collected) < $limit && $pagesUsed < $maxPages) {
+            $pageSize = $this->resolvePageSize($limit, count($collected), $needsFiltering);
             $page = $this->fetchPlaylistPage($playlist['id'], $apiKey, $nextCursor, $pageSize, $siteId);
 
             if ($page['error'] !== null) {
@@ -185,10 +185,17 @@ class YouTubeProvider extends Provider
             if ($nextCursor === null) {
                 break;
             }
+        }
 
-            if (!$needsFiltering) {
-                break;
-            }
+        // Stopping on the page budget with a cursor still in hand is the one case where
+        // fewer posts come back than were asked for and the channel has more to give.
+        // Saying so beats a silently short stream: the fix is a higher maxFetchPages.
+        if ($pagesUsed >= $maxPages && count($collected) < $limit && $nextCursor !== null) {
+            SocialStream::warning(
+                'YouTube stream fetch for site ' . $siteId . ' returned ' . count($collected)
+                . ' of the ' . $limit . ' posts requested: the ' . $maxPages
+                . '-page budget ran out first. Raise maxFetchPages to reach further back.'
+            );
         }
 
         return [
@@ -198,6 +205,28 @@ class YouTubeProvider extends Provider
             'error' => null,
             'cached' => false,
         ];
+    }
+
+    /**
+     * How many playlist items to ask the API for on the next page.
+     *
+     * A filtered fetch asks for full pages because most of what comes back is
+     * discarded, and a page sized to the limit would hand the filter exactly as many
+     * candidates as the caller wants to keep.
+     *
+     * An unfiltered fetch asks only for what is still missing, so a limit of 10 does
+     * not spend quota retrieving 50. It is a per-page figure, not the whole request:
+     * `maxResults` caps at 50, so a limit above that is reached across pages. Taking
+     * it as the whole request — one page of `min($limit, 50)` — is what used to make a
+     * limit of 100 return 50 with no indication anything had been left behind.
+     */
+    private function resolvePageSize(int $limit, int $collected, bool $needsFiltering): int
+    {
+        if ($needsFiltering) {
+            return self::MAX_RESULTS;
+        }
+
+        return max(1, min($limit - $collected, self::MAX_RESULTS));
     }
 
     /**
