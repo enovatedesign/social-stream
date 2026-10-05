@@ -1,11 +1,5 @@
 # Changelog
 
-## 1.4.1 - 2026-10-05
-
-### Fixed
-
-- **An API key restricted to "Websites (HTTP referrers)" now works.** Such a key checks the `Referer` header, which a server-side call does not send, so Google rejected every request with "Requests from referer <empty> are blocked". The site's base URL is now sent as the referrer, overridden by the new `apiReferrer` setting where a key's allowlist names a different domain.
-
 ## 1.4.0 - 2026-09-28
 
 ### Added
@@ -27,6 +21,7 @@
 
 ### Fixed
 
+- **An API key restricted to "Websites (HTTP referrers)" now works.** Such a key checks the `Referer` header, which a server-side call does not send, so Google rejected every request with "Requests from referer <empty> are blocked". The site's base URL is now sent as the referrer, overridden by the new `apiReferrer` setting where a key's allowlist names a different domain.
 - **The OAuth flow is no longer Instagram's flow run for everyone.** Instagram's authorisation URL was built for any provider declaring `usesOAuth()`, and its post-exchange checks ran unconditionally — querying Instagram about whichever provider's token had come back, and writing the account ID it returned to Instagram's connection row. Latent, because Instagram is currently the only OAuth provider, but it contradicted the multi-provider `state` handling it sat next to. Both are now provider hooks (`authorizationUrl()` and `completeAuthorization()`) on `base\ProviderInterface`, answered by the base class for providers with no flow, and the authorisation code exchange reports an unsupported provider instead of posting its code to graph.instagram.com.
 - **`isConfigured()` is no longer false forever for an API-key provider.** It tested the access token, which YouTube has never had — so the one method on `base\ProviderInterface` for asking whether a provider is set up answered "no" for a fully configured YouTube connection. It now asks what the provider's own authentication needs: a token for an OAuth provider, a key and a resolved account for one using an API key.
 - **A YouTube `limit` above 50 no longer silently returns 50.** The Data API caps `maxResults` at 50, and an unfiltered fetch asked for `min(limit, 50)` items and then stopped after one page — so `limit: 100` returned 50 posts and reported success, while the same limit on Instagram returned 100. An unfiltered fetch now pages until the limit is met, requesting only the shortfall each time so a small limit costs no extra quota, and logs a warning naming the shortfall if the `maxFetchPages` budget runs out with more still available.
