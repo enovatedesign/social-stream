@@ -125,8 +125,12 @@ No billing account is needed. The API is free within its daily quota of 10,000 u
 1. Under **APIs & Services > Credentials**, click **Create credentials > API key**.
 2. Copy the key.
 3. Click **Edit API key** and restrict it, which takes a minute and is worth doing — an unrestricted key can be spent by anyone who obtains it:
-   - **Application restrictions** → **IP addresses**, and add your server's outbound IP. Every call this plugin makes is server-side, so no browser ever needs the key. (Don't use **HTTP referrers**: that restriction is for keys used from a browser and will reject server-side calls.)
-   - **API restrictions** → **Restrict key** → **YouTube Data API v3**.
+   - **Application restrictions** → **IP addresses**, and add your server's outbound IP — not the server's internal address, and every egress path if queue workers run elsewhere. Every call this plugin makes is server-side, so no browser ever needs the key, and the source address is the one thing a holder of the key cannot forge.
+   - **API restrictions** → **Restrict key** → **YouTube Data API v3**. Checked entirely at Google's end, so it works whatever else the key is restricted to — and it means a leaked key can't be spent against anything else on the project's billing.
+
+   **Websites (HTTP referrers)** works too, so a key already restricted that way needs no change: the plugin sends your site's own base URL as the `Referer`. It is a weaker control than an IP address — anyone holding the key can send the same header — so prefer IP addresses for a key you are creating now. Set [`apiReferrer`](#configuration) when the key's allowlist names a domain the site's base URL doesn't match, such as a canonical host, or your production domain while a local `.test` site is tested against the same key.
+
+   **Android apps** and **iOS apps** cannot work at all: they check headers that only Google's mobile SDKs send.
 
 ### 3. Enter the key and channel in Craft
 
@@ -226,6 +230,7 @@ return [
     'shortsDetection' => true,
     'shortsRedirectFallback' => true,
     'shortsLookupBudget' => 8,
+    'apiReferrer' => null,
 ];
 ```
 
@@ -240,6 +245,7 @@ return [
 | `shortsDetection` | `bool` | `true` | Whether to identify YouTube Shorts. With this off, every video is reported as `VIDEO` |
 | `shortsRedirectFallback` | `bool` | `true` | Whether to fall back to a `/shorts/` page request for videos oEmbed can't classify |
 | `shortsLookupBudget` | `int` | `8` | Seconds a single fetch may spend on Shorts lookups before leaving the rest for the next one |
+| `apiReferrer` | `string\|null` | `null` | The `Referer` sent with YouTube Data API calls. Defaults to the site's own base URL. YouTube only |
 
 #### Filtering and `limit`
 

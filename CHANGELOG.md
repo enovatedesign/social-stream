@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.1 - 2026-10-05
+
+### Fixed
+
+- **An API key restricted to "Websites (HTTP referrers)" now works.** Such a key checks the `Referer` header, which a server-side call does not send, so Google rejected every request with "Requests from referer <empty> are blocked". The site's base URL is now sent as the referrer, overridden by the new `apiReferrer` setting where a key's allowlist names a different domain.
+
 ## 1.4.0 - 2026-09-28
 
 ### Added

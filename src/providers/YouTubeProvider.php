@@ -5,6 +5,7 @@ namespace enovate\socialstream\providers;
 use Craft;
 use enovate\socialstream\base\Provider;
 use enovate\socialstream\models\Post;
+use enovate\socialstream\providers\youtube\ApiReferrer;
 use enovate\socialstream\providers\youtube\ChannelReference;
 use enovate\socialstream\providers\youtube\QuotaMeter;
 use enovate\socialstream\providers\youtube\ShortsResolver;
@@ -60,6 +61,8 @@ class YouTubeProvider extends Provider
     private ?QuotaMeter $quota = null;
 
     private ?WebSubSubscriber $websub = null;
+
+    private ?ApiReferrer $referrer = null;
 
     // Provider metadata
     // =========================================================================
@@ -720,7 +723,7 @@ class YouTubeProvider extends Provider
                 // logged: the error paths below quote the API's message, never the
                 // request.
                 'query' => $query + ['key' => $apiKey],
-                'headers' => ['Accept' => 'application/json'],
+                'headers' => $this->apiHeaders($siteId),
             ]);
 
             $data = json_decode($response->getBody()->getContents(), true);
@@ -741,6 +744,45 @@ class YouTubeProvider extends Provider
 
             return ['data' => [], 'error' => $message];
         }
+    }
+
+    /**
+     * How to describe the referrer in a rejected-key message.
+     *
+     * A key restricted to websites is only as good as the match between its allowlist
+     * and this, so the admin is told what was actually sent — and where to change it
+     * when the two differ.
+     */
+    private function referrerNote(int $siteId): string
+    {
+        $referrer = $this->referrer()->forSite($siteId);
+
+        if ($referrer === null) {
+            return ' (no referrer was sent, because this site has no base URL — set '
+                . '`apiReferrer` in config/social-stream.php to send one)';
+        }
+
+        return ' (' . $referrer . ', which `apiReferrer` in config/social-stream.php overrides)';
+    }
+
+    /**
+     * The headers for a Data API call.
+     *
+     * The `Referer` is what makes a key restricted to "Websites (HTTP referrers)"
+     * usable at all; {@see ApiReferrer} explains why, and decides the value. Harmless
+     * to the other modes: an IP-restricted key is checked on its source address and an
+     * unrestricted one is not checked at all, and neither reads this.
+     */
+    private function apiHeaders(int $siteId): array
+    {
+        $headers = ['Accept' => 'application/json'];
+        $referrer = $this->referrer()->forSite($siteId);
+
+        if ($referrer !== null) {
+            $headers['Referer'] = $referrer;
+        }
+
+        return $headers;
     }
 
     /**
@@ -782,10 +824,15 @@ class YouTubeProvider extends Provider
         // none of it is fixed by reconnecting — the key itself has to be corrected in
         // the CP, so the message says so rather than leaving the admin with Google's
         // "API key not valid" and no idea where to put it.
+        //
+        // Google names the referrer it rejected, so naming the one that was sent turns
+        // a mismatch into something an admin can compare against the key's allowlist
+        // without guessing what left this server.
         if ($status === 401 || ($status === 403 && in_array($reason, ['forbidden', 'keyInvalid', 'keyExpired', 'ipRefererBlocked'], true))) {
             $keyMessage = 'YouTube rejected the API key: ' . $message
-                . ' Check the key on this page, and that its restrictions allow this server\'s IP address '
-                . 'and the YouTube Data API.';
+                . ' Check the key on this page, and that its restrictions allow the YouTube Data API '
+                . 'and either this server\'s IP address or the referrer sent with the request'
+                . ($this->referrerNote($siteId)) . '.';
             $this->recordError($siteId, $keyMessage);
 
             return $keyMessage;
@@ -840,5 +887,10 @@ class YouTubeProvider extends Provider
     private function websub(): WebSubSubscriber
     {
         return $this->websub ??= new WebSubSubscriber();
+    }
+
+    private function referrer(): ApiReferrer
+    {
+        return $this->referrer ??= new ApiReferrer();
     }
 }
