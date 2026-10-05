@@ -1,0 +1,159 @@
+{# YouTube's API key, channel and connection state. Included from settings/provider.twig. #}
+{% import '_includes/forms' as forms %}
+
+{% if youtube.isConnected %}
+    <div class="pane" style="padding: 16px 20px; margin-bottom: 24px;">
+        <h2 style="margin-top: 0;">{{ 'Connection Status' | t('social-stream') }}</h2>
+
+        <table class="data fullwidth" style="margin-bottom: 16px;">
+            <tbody>
+                <tr>
+                    <th style="width: 200px;">{{ 'Status' | t('social-stream') }}</th>
+                    <td>
+                        <span class="status active"></span>
+                        {{ 'Connected' | t('social-stream') }}
+                    </td>
+                </tr>
+                <tr>
+                    <th>{{ 'Channel' | t('social-stream') }}</th>
+                    <td>
+                        {% if youtube.profile %}
+                            {% if youtube.profile.thumbnailUrl %}
+                                <img src="{{ youtube.profile.thumbnailUrl }}" alt="" width="24" height="24" style="border-radius: 50%; vertical-align: middle; margin-right: 6px;">
+                            {% endif %}
+                            {% if youtube.profile.customUrl %}
+                                <strong>{{ youtube.profile.customUrl }}</strong>
+                                <span class="light"> · {{ youtube.profile.title }}</span>
+                            {% else %}
+                                <strong>{{ youtube.profile.title }}</strong>
+                            {% endif %}
+                            {% if youtube.profile.subscriberCount is not null and not youtube.profile.hiddenSubscriberCount %}
+                                <span class="light"> · {{ youtube.profile.subscriberCount | number_format }} {{ 'subscribers' | t('social-stream') }}</span>
+                            {% endif %}
+                        {% else %}
+                            <strong>{{ youtube.channelRef }}</strong>
+                        {% endif %}
+                        <div class="light" style="margin-top: 4px; font-size: 12px;">
+                            <code>{{ youtube.channelId }}</code> —
+                            {{ 'the ID every request uses, resolved once from the channel below. Renaming the channel or its handle won\'t break the feed.' | t('social-stream') }}
+                        </div>
+                    </td>
+                </tr>
+                {% if youtube.lastFetchAt %}
+                    <tr>
+                        <th>{{ 'Last Successful Fetch' | t('social-stream') }}</th>
+                        <td>{{ youtube.lastFetchAt | date('j M Y, g:ia') }}</td>
+                    </tr>
+                {% endif %}
+                {% if youtube.connection.lastError %}
+                    <tr>
+                        <th>{{ 'Last Error' | t('social-stream') }}</th>
+                        <td>
+                            <span style="color: var(--ui-danger-text-color, #c00);">{{ youtube.connection.lastError }}</span>
+                            {% if youtube.lastErrorAt %}
+                                <span class="light"> · {{ youtube.lastErrorAt | date('j M Y, g:ia') }}</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                {% endif %}
+                <tr>
+                    <th>{{ 'Push Notifications' | t('social-stream') }}</th>
+                    <td>
+                        <span class="status {{ youtube.websubActive ? 'active' : 'pending' }}"></span>
+                        {# The only date here guarded by a different value than the one it
+                           formats: websubActive is decided from the stored lease, the date
+                           shown is that lease prepared for display. An unreadable lease
+                           makes them disagree, and |date renders a null as *now* — so the
+                           lease is reported without a date rather than with today's. #}
+                        {% if youtube.websubActive and youtube.websubExpiresAt %}
+                            {{ 'Active until {date}' | t('social-stream', { date: youtube.websubExpiresAt | date('j M Y, g:ia') }) }}
+                        {% elseif youtube.websubActive %}
+                            {{ 'Active' | t('social-stream') }}
+                        {% elseif youtube.websubPending %}
+                            {{ 'Requested — waiting for the hub to confirm, which usually takes a few seconds. Reload the page.' | t('social-stream') }}
+                        {% elseif youtube.websubExpiresAt %}
+                            {{ 'Lease expired {date}' | t('social-stream', { date: youtube.websubExpiresAt | date('j M Y, g:ia') }) }}
+                        {% else %}
+                            {{ 'Not subscribed — new uploads appear when the cache expires' | t('social-stream') }}
+                        {% endif %}
+                        {% if youtube.webhookLastReceivedAt %}
+                            <span class="light"> · {{ 'last notification {date}' | t('social-stream', { date: youtube.webhookLastReceivedAt | date('j M Y, g:ia') }) }}</span>
+                        {% endif %}
+                        <button type="button" id="websub-subscribe-btn" class="btn small" style="margin-left: 8px;">
+                            {{ youtube.websubActive ? 'Renew' | t('social-stream') : 'Subscribe' | t('social-stream') }}
+                        </button>
+                        {% if not youtube.websubActive and not youtube.websubPending %}
+                            <div class="light" style="margin-top: 4px; font-size: 12px;">
+                                {{ 'Subscribing happens automatically when you save a channel, and renews itself every 9 days. Use this if the hub was unreachable at the time.' | t('social-stream') }}
+                            </div>
+                        {% endif %}
+                    </td>
+                </tr>
+                <tr>
+                    <th>{{ 'Daily Quota' | t('social-stream') }}</th>
+                    <td>
+                        {{ '{used} / {limit} units' | t('social-stream', { used: youtube.quotaUsed | number_format, limit: youtube.quotaLimit | number_format }) }}
+                        <span class="light"> · {{ 'resets at midnight Pacific Time' | t('social-stream') }}</span>
+                    </td>
+                </tr>
+                <tr>
+                    <th>{{ 'Rate Limit' | t('social-stream') }}</th>
+                    <td>
+                        {% if youtube.isRateLimited %}
+                            <span class="status pending"></span> {{ 'Cooldown active' | t('social-stream') }}
+                        {% else %}
+                            <span class="status active"></span> {{ 'No restrictions' | t('social-stream') }}
+                        {% endif %}
+                    </td>
+                </tr>
+                <tr>
+                    <th>{{ 'API' | t('social-stream') }}</th>
+                    <td><code>YouTube Data API v3</code></td>
+                </tr>
+            </tbody>
+        </table>
+
+        {% include 'social-stream/settings/_provider-actions' %}
+    </div>
+{% elseif youtube.connection.lastError %}
+    <div class="pane" style="background: var(--ui-danger-bg-color, #fdd); padding: 12px 16px; margin-bottom: 24px; border-radius: 4px;">
+        <p style="margin: 0; color: var(--ui-danger-text-color, #c00);">
+            {{ youtube.connection.lastError }}
+        </p>
+    </div>
+{% endif %}
+
+{{ forms.autosuggestField({
+    label: 'API Key' | t('social-stream'),
+    instructions: 'From a Google Cloud project with the YouTube Data API v3 enabled: APIs & Services > Credentials > Create credentials > API key. Restrict it to this server\'s IP address (optional) and to the YouTube Data API. Supports environment variables.' | t('social-stream'),
+    id: 'apiKey',
+    name: 'apiKey',
+    value: youtube.apiKeyIsEnvVar ? youtube.apiKey : '',
+    placeholder: (not youtube.apiKeyIsEnvVar and youtube.hasApiKey) ? '••••••••' : '',
+    suggestions: craft.cp.getEnvSuggestions(),
+    suggestEnvVars: true,
+    required: true,
+}) }}
+
+{{ forms.textField({
+    label: 'Channel' | t('social-stream'),
+    instructions: 'The address of the channel to read — open it on YouTube and copy what\'s in the address bar. A channel URL (youtube.com/@yourchannel), a channel ID, or a link to any video on the channel all work.' | t('social-stream'),
+    id: 'channelRef',
+    name: 'channelRef',
+    value: youtube.channelRef,
+    placeholder: 'https://www.youtube.com/@yourchannel',
+    required: true,
+}) }}
+
+{% if youtube.webhookCallbackUrl %}
+    <p class="light" style="margin: -12px 0 24px;">
+        {{ 'Push notifications are delivered to:' | t('social-stream') }}
+        <code style="user-select: all;">{{ youtube.webhookCallbackUrl }}</code>
+    </p>
+{% endif %}
+
+<div class="pane" style="padding: 12px 16px;">
+    <p style="margin: 0;" class="light">
+        {{ 'Only public videos are readable with an API key. Private and unlisted uploads stay invisible to the plugin, which is the trade for not having to create and publish a Google OAuth app.' | t('social-stream') }}
+    </p>
+</div>

@@ -3,6 +3,7 @@
 namespace enovate\socialstream\jobs;
 
 use Craft;
+use craft\db\Query;
 
 /**
  * Serialises a job's dedupe-then-push across every host sharing the database.
@@ -31,5 +32,47 @@ trait DedupedPushTrait
         } finally {
             $mutex->release($lockName);
         }
+    }
+
+    /**
+     * Check the Craft queue table for a pending / running / recently-failed job
+     * with the same dedup tag. Reads go through the primary DB so replica lag
+     * can't mislead a host into queueing a duplicate.
+     *
+     * Call inside {@see withPushLock()} — on its own it is check-then-act.
+     */
+    protected static function queueIsClear(string $tag): bool
+    {
+        $like = ['like', 'description', $tag];
+
+        Craft::$app->getDb()->usePrimary(function () use ($like) {
+            Craft::$app->getDb()->createCommand()
+                ->delete('{{%queue}}', [
+                    'and',
+                    $like,
+                    ['fail' => true],
+                    ['<', 'timePushed', time() - 86400],
+                ])
+                ->execute();
+        });
+
+        $pending = Craft::$app->getDb()->usePrimary(fn() => (new Query())
+            ->from('{{%queue}}')
+            ->where($like)
+            ->andWhere(['fail' => false])
+            ->exists());
+
+        if ($pending) {
+            return false;
+        }
+
+        $recentlyFailed = Craft::$app->getDb()->usePrimary(fn() => (new Query())
+            ->from('{{%queue}}')
+            ->where($like)
+            ->andWhere(['fail' => true])
+            ->andWhere(['>=', 'timePushed', time() - 7200])
+            ->exists());
+
+        return !$recentlyFailed;
     }
 }

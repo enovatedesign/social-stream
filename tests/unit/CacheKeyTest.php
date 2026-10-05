@@ -2,6 +2,8 @@
 
 namespace enovate\socialstream\tests\unit;
 
+use enovate\socialstream\providers\InstagramProvider;
+use enovate\socialstream\providers\YouTubeProvider;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -23,7 +25,8 @@ class CacheKeyTest extends TestCase
         $provider = $options['provider'] ?? '';
         $limit = $options['limit'] ?? 25;
         $mediaType = strtoupper($options['mediaType'] ?? 'ALL');
-        $excludeNonFeed = !empty($options['excludeNonFeed']) ? '1' : '0';
+        $usesExcludeNonFeed = $this->providerUsesExcludeNonFeed((string) $provider);
+        $excludeNonFeed = ($usesExcludeNonFeed && !empty($options['excludeNonFeed'])) ? '1' : '0';
         $after = $options['after'] ?? '0';
 
         return implode(':', [
@@ -36,6 +39,19 @@ class CacheKeyTest extends TestCase
             $after,
             self::STUB_HASH,
         ]);
+    }
+
+    /**
+     * CacheService asks the registry for the provider instance; here the registered
+     * classes are consulted directly, since building one needs no Craft application.
+     */
+    private function providerUsesExcludeNonFeed(string $provider): bool
+    {
+        return match ($provider) {
+            InstagramProvider::handle() => InstagramProvider::usesExcludeNonFeed(),
+            YouTubeProvider::handle() => YouTubeProvider::usesExcludeNonFeed(),
+            default => true,
+        };
     }
 
     private function profileKey(int $siteId, string $provider): string
@@ -157,6 +173,51 @@ class CacheKeyTest extends TestCase
         $key2 = $this->streamKey($options);
 
         $this->assertSame($key1, $key2);
+    }
+
+    public function testOnlyInstagramActsOnExcludeNonFeed(): void
+    {
+        $this->assertTrue(
+            InstagramProvider::usesExcludeNonFeed(),
+            'is_shared_to_feed is an Instagram field, and the option filters on it.'
+        );
+        $this->assertFalse(
+            YouTubeProvider::usesExcludeNonFeed(),
+            'YouTube has no equivalent, so keying on the option would split its cache in two.'
+        );
+    }
+
+    public function testExcludeNonFeedIsNormalisedAwayForYouTube(): void
+    {
+        $on = $this->streamKey(['siteId' => 1, 'provider' => 'youtube', 'excludeNonFeed' => true]);
+        $off = $this->streamKey(['siteId' => 1, 'provider' => 'youtube', 'excludeNonFeed' => false]);
+
+        $this->assertSame(
+            $on,
+            $off,
+            'A flag the provider ignores must not produce a second entry for the same stream.'
+        );
+        $this->assertSame('social-stream:1:youtube:25:ALL:0:0:TEST', $on);
+    }
+
+    public function testExcludeNonFeedStillKeysInstagramEntries(): void
+    {
+        $on = $this->streamKey(['siteId' => 1, 'provider' => 'instagram', 'excludeNonFeed' => true]);
+        $off = $this->streamKey(['siteId' => 1, 'provider' => 'instagram', 'excludeNonFeed' => false]);
+
+        $this->assertNotSame($on, $off);
+    }
+
+    public function testAnUnknownProviderKeepsTheExistingKeyShape(): void
+    {
+        $on = $this->streamKey(['siteId' => 1, 'provider' => 'tiktok', 'excludeNonFeed' => true]);
+        $off = $this->streamKey(['siteId' => 1, 'provider' => 'tiktok', 'excludeNonFeed' => false]);
+
+        $this->assertNotSame(
+            $on,
+            $off,
+            'Guessing on behalf of a third-party provider would silently change its keys.'
+        );
     }
 
     public function testProfileKeyFormat(): void

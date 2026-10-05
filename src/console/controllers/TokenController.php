@@ -5,6 +5,7 @@ namespace enovate\socialstream\console\controllers;
 use craft\console\Controller;
 use enovate\socialstream\jobs\RefreshTokenJob;
 use enovate\socialstream\records\ConnectionRecord;
+use enovate\socialstream\SocialStream;
 use yii\console\ExitCode;
 
 /**
@@ -13,11 +14,12 @@ use yii\console\ExitCode;
  * The consolidated `social-stream/refresh` cron handles token refresh
  * automatically when a token is within 7 days of expiry. Use this command
  * to force an early refresh — for example after re-authenticating or
- * rotating the Instagram app secret.
+ * rotating an app secret.
  *
  * Usage:
- *   php craft social-stream/token/refresh             # Queue refresh for all sites
- *   php craft social-stream/token/refresh --site=1    # Queue refresh for a specific site
+ *   php craft social-stream/token/refresh                      # every provider, every site
+ *   php craft social-stream/token/refresh --site=1              # a specific site
+ *   php craft social-stream/token/refresh --provider=instagram  # a specific provider
  */
 class TokenController extends Controller
 {
@@ -26,48 +28,77 @@ class TokenController extends Controller
      */
     public ?int $site = null;
 
+    /**
+     * @var string|null Provider handle to refresh. If null, every registered provider.
+     */
+    public ?string $provider = null;
+
     public function options($actionID): array
     {
         $options = parent::options($actionID);
         $options[] = 'site';
+        $options[] = 'provider';
 
         return $options;
     }
 
     /**
-     * Queue an Instagram long-lived access token refresh for one or all sites.
+     * Queue an access token refresh for one or all sites.
      */
     public function actionRefresh(): int
     {
-        $provider = 'instagram';
+        $providerHandles = $this->provider !== null
+            ? [$this->provider]
+            : array_keys(SocialStream::$plugin->providers->getAllProviders());
 
-        if ($this->site !== null) {
-            $this->stdout(RefreshTokenJob::pushIfNotQueued($this->site, $provider)
-                ? "Site {$this->site} ({$provider}): token refresh queued." . PHP_EOL
-                : "Site {$this->site} ({$provider}): token refresh already queued." . PHP_EOL);
+        if (empty($providerHandles)) {
+            $this->stdout('No providers registered.' . PHP_EOL);
 
-            return ExitCode::OK;
-        }
-
-        $connections = ConnectionRecord::findAll(['provider' => $provider]);
-
-        if (empty($connections)) {
-            $this->stdout("No {$provider} connections found." . PHP_EOL);
             return ExitCode::OK;
         }
 
         $queued = 0;
 
-        foreach ($connections as $connection) {
-            if (RefreshTokenJob::pushIfNotQueued($connection->siteId, $provider)) {
-                $this->stdout("  Site {$connection->siteId} ({$provider}): token refresh queued." . PHP_EOL);
-                $queued++;
-            } else {
-                $this->stdout("  Site {$connection->siteId} ({$provider}): token refresh already queued." . PHP_EOL);
+        foreach ($providerHandles as $provider) {
+            $registered = SocialStream::$plugin->providers->getProviderByHandle($provider);
+
+            // Nothing to refresh where there is no OAuth — say so rather than
+            // reporting zero connections, which reads as a misconfiguration.
+            if ($registered !== null && !$registered::usesOAuth()) {
+                $this->stdout("{$provider} authenticates with an API key — nothing to refresh." . PHP_EOL);
+                continue;
+            }
+
+            if ($this->site !== null) {
+                $queued += $this->queue($this->site, $provider) ? 1 : 0;
+                continue;
+            }
+
+            $connections = ConnectionRecord::findAll(['provider' => $provider]);
+
+            if (empty($connections)) {
+                $this->stdout("No {$provider} connections found." . PHP_EOL);
+                continue;
+            }
+
+            foreach ($connections as $connection) {
+                $queued += $this->queue((int) $connection->siteId, $provider) ? 1 : 0;
             }
         }
 
         $this->stdout("Done. {$queued} job(s) queued." . PHP_EOL);
+
         return ExitCode::OK;
+    }
+
+    private function queue(int $siteId, string $provider): bool
+    {
+        $pushed = RefreshTokenJob::pushIfNotQueued($siteId, $provider);
+
+        $this->stdout($pushed
+            ? "  Site {$siteId} ({$provider}): token refresh queued." . PHP_EOL
+            : "  Site {$siteId} ({$provider}): token refresh already queued." . PHP_EOL);
+
+        return $pushed;
     }
 }
